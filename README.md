@@ -5,19 +5,29 @@ Primary router running OpenWrt 24.10.5 on Cudy WR3000S v1 with PPPoE WAN and dua
 ## Network Topology
 
 ```
-ISP ONT ──► [WAN] Cudy WR3000S v1 [LAN 1-4] ──► Managed Switches
-                   │                                    (VLAN 1 untagged + VLAN 10 tagged)
-                   │
-                   ├── br-lan.1  (192.168.1.0/24)  — LAN (VLAN 1)
-                   │   ├── 2.4GHz: "Md Abdullah"
-                   │   └── 5GHz:   "Md Abdullah 5G"
-                   │
-                   └── br-lan.10 (192.168.10.0/24) — IoT (VLAN 10)
-                       ├── 2.4GHz: "Md Abdullah - IOT"
-                       └── 5GHz:   "Md Abdullah - IOT 5G"
+                         Netgear GS108Ev3 (8-port managed)
+                        ┌──────────────────────────────┐
+ISP ONT ──► [Port 1]    │  VLAN 50 (isolated WAN)      │    [Port 2] ──► Cudy WAN
+                        │                              │
+                        │  Ports 3-8: LAN (VLAN 1)     │
+                        │           + IoT (VLAN 10)     │
+                        └──────────────────────────────┘
+                                      │
+                              Cudy WR3000S v1
+                        ┌──────────────────────────────┐
+                        │  [WAN]          [LAN 1-4]    │──► Trunk to switches
+                        │   PPPoE          VLAN 1 (u*) │    (VLAN 1 untagged +
+                        │                  VLAN 10 (t)  │     VLAN 10 tagged)
+                        │                              │
+                        │  br-lan.1  (192.168.1.0/24)  │ — LAN
+                        │   ├── 2.4GHz: "Md Abdullah"  │
+                        │   └── 5GHz: "Md Abdullah 5G" │
+                        │                              │
+                        │  br-lan.10 (192.168.10.0/24) │ — IoT
+                        │   ├── 2.4GHz: "Md Abdullah - IOT"    │
+                        │   └── 5GHz: "Md Abdullah - IOT 5G"   │
+                        └──────────────────────────────┘
 ```
-
-<!-- TODO: Add managed switches and additional APs to topology -->
 
 ## Hardware Inventory
 
@@ -37,8 +47,11 @@ ISP ONT ──► [WAN] Cudy WR3000S v1 [LAN 1-4] ──► Managed Switches
 - TP-Link Archer C6 AC1200 (WiFi 5) (~3000 BDT)
 
 ### Managed Switches
-- TP-Link TL-SG105E 5-port (~1800 BDT)
-- Netgear GS108E 8-port (~4200 BDT)
+- **Netgear GS108Ev3** 8-port Gigabit managed switch
+  - Role: TBD (verified: WAN isolation via VLAN 50)
+  - Location: TBD
+  - Price: ~4200 BDT
+- TP-Link TL-SG105E 5-port (~1800 BDT) — available for expansion
 
 ## IP Addressing Scheme
 
@@ -75,7 +88,24 @@ IoT isolation is implemented via **802.1Q bridge VLANs** on the DSA bridge (`br-
 
 ### Managed Switch Configuration
 
-All LAN ports are trunk ports (VLAN 1 untagged + VLAN 10 tagged). Configure managed switches accordingly:
+#### Netgear GS108Ev3 — VLAN Assignments (Example, not final)
+
+> **Note**: This configuration was used to verify VLAN-based WAN isolation over a single hop. Final switch placement and port assignments are TBD.
+
+| Port | Device | VLAN 1 | VLAN 10 | VLAN 50 | PVID | Role |
+|------|--------|--------|---------|---------|------|------|
+| 1 | ISP ONT | — | — | **U** | 50 | WAN ingress (isolated) |
+| 2 | Cudy WAN | — | — | **U** | 50 | WAN egress (isolated) |
+| 3 | Cudy LAN | **U** | **T** | — | 1 | Trunk (LAN + IoT) |
+| 4–8 | Devices | **U** | — | — | 1 | LAN access |
+
+**VLAN 50 (WAN isolation)**: Ports 1↔2 only. PPPoE traffic between ISP ONT and Cudy WAN is completely isolated from all other switch ports. Untagged on both sides — transparent to connected devices.
+
+**Verified**: PPPoE WAN connectivity confirmed through VLAN 50 single-hop path.
+
+#### General Switch Port Templates
+
+For any managed switch on the LAN side:
 
 | Switch Port | VLAN 1 | VLAN 10 | Connect To |
 |-------------|--------|---------|------------|
