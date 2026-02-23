@@ -168,17 +168,16 @@ Channel 11 selected over 6 because the HE40 secondary channel (below, ch 7-10) h
 ## Internet Connectivity
 
 - **Protocol**: PPPoE
-- **WAN IP**: Dynamic (currently 10.135.14.234)
+- **WAN IP**: Dynamic (currently 10.135.15.29)
 - **MTU**: 1492 (PPPoE standard)
 - **IPv6**: wan6 (DHCPv6, auto — depends on ISP support)
 
 <!-- TODO: Document ISP name, plan, bandwidth -->
-<!-- TODO: Describe failover or load-balancing setup if applicable -->
 
 ## Firewall & Security
 
 - OpenWrt default firewall (nftables) active
-- NAT/masquerade: enabled on wan
+- NAT/masquerade: enabled on wan zone
 - WiFi: WPA2/WPA3 SAE-Mixed (CCMP) on all SSIDs
 
 ### Firewall Zones
@@ -225,3 +224,48 @@ Channel 11 selected over 6 because the HE40 secondary channel (below, ch 7-10) h
 - **Flash chip**: Original (serial 2512 < 2543 cutoff), compatible with all 24.10.x releases
 
 <!-- TODO: List maintenance schedules and contact information -->
+
+## Verified Experiments (2026-02-20)
+
+Capabilities tested and confirmed working. These are **not active** in the current config but can be re-applied as needed.
+
+### 1. Dual-WAN (LAN1 as WAN2)
+
+**Verified**: Any LAN port can be repurposed as a second WAN port.
+
+| Step | Command |
+|------|---------|
+| Remove lan1 from bridge | `uci del_list network.@device[0].ports='lan1'` |
+| Remove from VLAN 1 | `uci del_list network.@bridge-vlan[0].ports='lan1:u*'` |
+| Remove from VLAN 10 | `uci del_list network.@bridge-vlan[1].ports='lan1:t'` |
+| Create wan2 interface | `uci set network.wan2=interface; uci set network.wan2.device='lan1'; uci set network.wan2.proto='pppoe'; uci set network.wan2.metric='20'` |
+| Set wan metric | `uci set network.wan.metric='10'` |
+| Add to firewall zone | `uci add_list firewall.@zone[1].network='wan2'` |
+
+**Behavior**:
+- With one ISP: Only the connected WAN carries traffic. The other stays down harmlessly.
+- With two ISPs: Lower metric (wan=10) is preferred. No automatic failover without **mwan3**.
+- **mwan3** package enables proper failover and/or load balancing.
+
+**Reverted**: LAN1 restored to LAN role with full VLAN 1+10 trunk.
+
+### 2. WAN Isolation via Managed Switch (VLAN 50)
+
+**Verified**: PPPoE WAN traffic can be isolated through a managed switch using a dedicated VLAN.
+
+| Switch Port | VLAN 50 | PVID | Device |
+|-------------|---------|------|--------|
+| Port 1 | Untagged | 50 | ISP ONT |
+| Port 2 | Untagged | 50 | Cudy WAN |
+| Ports 3–8 | Not member | 1 | LAN devices |
+
+PPPoE frames travel exclusively between Port 1↔2 inside VLAN 50. All other switch ports cannot see WAN traffic. Both ports are access mode (untagged) — transparent to Cudy and ONT, no router-side changes needed.
+
+### 3. DSA Bridge-VLAN Lessons Learned
+
+| Mistake | Consequence | Fix |
+|---------|-------------|-----|
+| Setting `vlan_filtering=1` manually | Not needed — netifd does it automatically | Remove manual setting |
+| Keeping `network.lan.device='br-lan'` after adding bridge-vlan entries | **All LAN/WiFi connectivity dies** | Must change to `br-lan.1` |
+| Not including WiFi in bridge-vlan port lists | Not a problem — netifd auto-handles WiFi VLAN assignment | No action needed |
+| Modifying bridge/VLAN config without rollback timer | Risk of permanent lockout | Always use: `(sleep 120 && cp backup && /etc/init.d/network restart) &` |
