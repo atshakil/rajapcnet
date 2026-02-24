@@ -12,7 +12,8 @@
 # Port Layout:
 #   LAN1 = trunk (VLAN 1,10,20,50 tagged)
 #   LAN2 = trunk (VLAN 1,10,20,51 tagged)
-#   LAN3,LAN4 = unused (removed from bridge)
+#   LAN3 = unused (removed from bridge)
+#   LAN4 = emergency access (VLAN 10 untagged, added post-script via UCI)
 #   WAN  = unused (ISP now via VLAN 50/51)
 #
 # Multi-WAN: Starlink(51) primary, Local ISP(50) fallback
