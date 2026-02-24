@@ -1,18 +1,23 @@
 #!/bin/bash
 # Backup OpenWrt configuration from Cudy WR3000S v1 (5th Floor)
 # Usage: ./backup.sh [router_ip] [ssh_user]
+#        JUMP_HOST=admin@cyg.local ./backup.sh
 #
 # Creates a timestamped backup under backups/
-# Requires SSH key-based access to the router (via jump host).
+# Requires SSH key-based access to the router.
+# Set JUMP_HOST env var for ProxyJump (e.g., when Pi is the gateway).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKUP_BASE="$SCRIPT_DIR/backups"
 
-ROUTER_IP="${1:-192.168.1.1}"
+ROUTER_IP="${1:-192.168.10.2}"
 SSH_USER="${2:-root}"
-SSH_OPTS="-o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+JUMP_HOST="${JUMP_HOST:-}"
+
+SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+[[ -n "$JUMP_HOST" ]] && SSH_OPTS+=(-o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p $JUMP_HOST")
 
 # UCI config files to back up (core routing/firewall/wireless)
 UCI_CONFIGS=(
@@ -42,7 +47,7 @@ log() { echo "[backup] $*"; }
 die() { echo "[backup] ERROR: $*" >&2; exit 1; }
 
 ssh_cmd() {
-    ssh $SSH_OPTS "${SSH_USER}@${ROUTER_IP}" "$@"
+    ssh "${SSH_OPTS[@]}" "${SSH_USER}@${ROUTER_IP}" "$@"
 }
 
 check_connectivity() {
