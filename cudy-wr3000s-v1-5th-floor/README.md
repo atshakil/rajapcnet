@@ -162,7 +162,7 @@ All DHCP is disabled. RouterF2 serves DHCP for all VLANs.
 | dhcp.lan.ignore | 1 |
 | dhcp.iot.ignore | 1 |
 | dhcp.starlink.ignore | 1 |
-| dnsmasq port | 0 (DNS cache disabled) |
+| dnsmasq | disabled (service stopped, not just port=0) |
 | odhcpd | disabled |
 
 ---
@@ -171,13 +171,13 @@ All DHCP is disabled. RouterF2 serves DHCP for all VLANs.
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
+| packet_steering | 1 | Distribute IRQs across both CPU cores |
 | conloglevel | 5 (notice) | Suppress debug kernel messages |
 | cronloglevel | 5 (notice) | Suppress cron execution spam |
-| log_size | 256 KB | Larger ring buffer for debugging |
+| log_size | 64 KB | Bounded ring buffer — no unbounded growth |
 | urandom_seed | 512 | Persist entropy across reboots |
 | odhcpd | disabled | No IPv6 in use |
-
----
+| dnsmasq | disabled | No DNS/DHCP needed — saves ~3 MB RAM |
 
 ## Common Tasks
 
@@ -238,7 +238,8 @@ Saves timestamped backup to `backups/YYYYMMDD-HHMMSS/`.
 |-----------|-------|
 | 20260224-021201 | Original factory + initial setup (pre-bridge config) |
 | 20260224-112758 | VLAN bridge + AP config (WAN=trunk, LAN4=emergency) |
-| 20260224-114329 | New port layout (WAN=Starlink, LAN1=trunk, LAN4=IoT+mgmt) — current |
+| 20260224-114329 | New port layout (WAN=Starlink, LAN1=trunk, LAN4=IoT+mgmt) |
+| 20260224-122545 | Optimizations (packet_steering, log_size=64, dnsmasq disabled) — current |
 
 ---
 
