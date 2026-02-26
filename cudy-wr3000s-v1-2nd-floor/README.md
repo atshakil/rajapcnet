@@ -253,7 +253,8 @@ Saves timestamped backup to `backups/YYYYMMDD-HHMMSS/` with:
 | Timestamp | Notes |
 |-----------|-------|
 | 20260220-185910 | Original factory + initial setup |
-| 20260224-091516 | Full VLAN + multi-WAN + optimizations (current) |
+| 20260224-091516 | Full VLAN + multi-WAN + optimizations |
+| 20260226-224405 | Post-restore + DHCP reservation (Pi CNC) + CNC→IoT firewall rule — current |
 
 ---
 

@@ -1,0 +1,712 @@
+package dhcp
+
+config dnsmasq
+	option domainneeded '1'
+	option boguspriv '1'
+	option filterwin2k '0'
+	option localise_queries '1'
+	option rebind_protection '1'
+	option rebind_localhost '1'
+	option local '/lan/'
+	option domain 'lan'
+	option expandhosts '1'
+	option nonegcache '0'
+	option cachesize '1000'
+	option authoritative '1'
+	option readethers '1'
+	option leasefile '/tmp/dhcp.leases'
+	option resolvfile '/tmp/resolv.conf.d/resolv.conf.auto'
+	option nonwildcard '1'
+	option localservice '1'
+	option ednspacket_max '1232'
+	option filter_aaaa '0'
+	option filter_a '0'
+
+config dhcp 'lan'
+	option interface 'lan'
+	option start '100'
+	option limit '150'
+	option leasetime '12h'
+	option dhcpv4 'server'
+
+config dhcp 'wan'
+	option interface 'wan'
+	option ignore '1'
+
+config odhcpd 'odhcpd'
+	option maindhcp '0'
+	option leasefile '/tmp/hosts/odhcpd'
+	option leasetrigger '/usr/sbin/odhcpd-update'
+	option loglevel '4'
+	option piofolder '/tmp/odhcpd-piofolder'
+
+config dhcp 'iot'
+	option interface 'iot'
+	option start '100'
+	option limit '150'
+	option leasetime '12h'
+	option dhcpv4 'server'
+
+config dhcp 'mgmt'
+	option interface 'mgmt'
+	option start '100'
+	option limit '50'
+	option leasetime '12h'
+	option dhcpv4 'server'
+
+config host
+	option name 'RaspberryPi-CNC'
+	option mac 'b8:27:eb:58:73:0e'
+	option ip '192.168.10.250'
+	option dns '1'
+
+package dropbear
+
+config dropbear 'main'
+	option enable '1'
+	option PasswordAuth 'on'
+	option RootPasswordAuth 'on'
+	option Port '22'
+
+package firewall
+
+config defaults
+	option syn_flood '1'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option flow_offloading '1'
+	option flow_offloading_hw '1'
+
+config rule
+	option name 'Allow-DHCP-Renew'
+	option src 'wan'
+	option proto 'udp'
+	option dest_port '68'
+	option target 'ACCEPT'
+	option family 'ipv4'
+
+config rule
+	option name 'Allow-Ping'
+	option src 'wan'
+	option proto 'icmp'
+	option icmp_type 'echo-request'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-IGMP'
+	option src 'wan'
+	option proto 'igmp'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-DHCPv6'
+	option src 'wan'
+	option proto 'udp'
+	option dest_port '546'
+	option family 'ipv6'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-MLD'
+	option src 'wan'
+	option proto 'icmp'
+	option src_ip 'fe80::/10'
+	list icmp_type '130/0'
+	list icmp_type '131/0'
+	list icmp_type '132/0'
+	list icmp_type '143/0'
+	option family 'ipv6'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-ICMPv6-Input'
+	option src 'wan'
+	option proto 'icmp'
+	list icmp_type 'echo-request'
+	list icmp_type 'echo-reply'
+	list icmp_type 'destination-unreachable'
+	list icmp_type 'packet-too-big'
+	list icmp_type 'time-exceeded'
+	list icmp_type 'bad-header'
+	list icmp_type 'unknown-header-type'
+	list icmp_type 'router-solicitation'
+	list icmp_type 'neighbour-solicitation'
+	list icmp_type 'router-advertisement'
+	list icmp_type 'neighbour-advertisement'
+	option limit '1000/sec'
+	option family 'ipv6'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-ICMPv6-Forward'
+	option src 'wan'
+	option dest '*'
+	option proto 'icmp'
+	list icmp_type 'echo-request'
+	list icmp_type 'echo-reply'
+	list icmp_type 'destination-unreachable'
+	list icmp_type 'packet-too-big'
+	list icmp_type 'time-exceeded'
+	list icmp_type 'bad-header'
+	list icmp_type 'unknown-header-type'
+	option limit '1000/sec'
+	option family 'ipv6'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-IPSec-ESP'
+	option src 'wan'
+	option dest 'lan'
+	option proto 'esp'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-ISAKMP'
+	option src 'wan'
+	option dest 'lan'
+	option dest_port '500'
+	option proto 'udp'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-IoT-DHCP'
+	option src 'iot'
+	option proto 'udp'
+	option dest_port '67-68'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-IoT-DNS'
+	option src 'iot'
+	option proto 'tcp udp'
+	option dest_port '53'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Block-IoT-to-LAN'
+	option src 'iot'
+	option dest 'lan'
+	option proto 'all'
+	option target 'REJECT'
+
+config zone
+	option name 'mgmt'
+	list network 'mgmt'
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+
+config zone
+	option name 'lan'
+	list network 'lan'
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+
+config zone
+	option name 'iot'
+	list network 'iot'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+
+config zone
+	option name 'wan'
+	list network 'wan'
+	list network 'wan2'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option masq '1'
+	option mtu_fix '1'
+
+config forwarding
+	option src 'mgmt'
+	option dest 'wan'
+
+config forwarding
+	option src 'lan'
+	option dest 'wan'
+
+config forwarding
+	option src 'iot'
+	option dest 'wan'
+
+config rule
+	option name 'Allow-Mgmt-DHCP'
+	option src 'mgmt'
+	option proto 'udp'
+	option dest_port '67-68'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Allow-CNC-to-IoT'
+	option src 'lan'
+	option src_ip '192.168.10.250'
+	option dest 'iot'
+	option proto 'all'
+	option target 'ACCEPT'
+
+config forwarding
+	option src 'lan'
+	option dest 'iot'
+
+config rule
+	option name 'Block-LAN-to-IoT'
+	option src 'lan'
+	option dest 'iot'
+	option proto 'all'
+	option target 'REJECT'
+
+package luci
+
+config core 'main'
+	option lang 'auto'
+	option mediaurlbase '/luci-static/bootstrap'
+	option resourcebase '/luci-static/resources'
+	option ubuspath '/ubus/'
+
+config extern 'flash_keep'
+	option uci '/etc/config/'
+	option dropbear '/etc/dropbear/'
+	option openvpn '/etc/openvpn/'
+	option passwd '/etc/passwd'
+	option opkg '/etc/opkg.conf'
+	option firewall '/etc/firewall.user'
+	option uploads '/lib/uci/upload/'
+
+config internal 'languages'
+
+config internal 'sauth'
+	option sessionpath '/tmp/luci-sessions'
+	option sessiontime '3600'
+
+config internal 'ccache'
+	option enable '1'
+
+config internal 'themes'
+	option Bootstrap '/luci-static/bootstrap'
+	option BootstrapDark '/luci-static/bootstrap-dark'
+	option BootstrapLight '/luci-static/bootstrap-light'
+
+config internal 'apply'
+	option rollback '90'
+	option holdoff '4'
+	option timeout '5'
+	option display '1.5'
+
+config internal 'diag'
+	option dns 'openwrt.org'
+	option ping 'openwrt.org'
+	option route 'openwrt.org'
+
+package mwan3
+
+config interface 'wan'
+	option enabled '1'
+	option initial_state 'online'
+	option family 'ipv4'
+	list track_ip '8.8.8.8'
+	list track_ip '1.1.1.1'
+	option track_method 'ping'
+	option reliability '1'
+	option count '3'
+	option size '56'
+	option max_ttl '60'
+	option check_quality '0'
+	option timeout '4'
+	option interval '10'
+	option failure_interval '5'
+	option recovery_interval '5'
+	option down '5'
+	option up '3'
+
+config interface 'wan2'
+	option enabled '0'
+	option initial_state 'online'
+	option family 'ipv4'
+	list track_ip '8.8.4.4'
+	list track_ip '1.0.0.1'
+	option track_method 'ping'
+	option reliability '1'
+	option count '3'
+	option size '56'
+	option max_ttl '60'
+	option check_quality '0'
+	option timeout '4'
+	option interval '10'
+	option failure_interval '5'
+	option recovery_interval '5'
+	option down '5'
+	option up '3'
+
+config member 'wan2_m1'
+	option interface 'wan2'
+	option metric '1'
+	option weight '1'
+
+config member 'wan_m2'
+	option interface 'wan'
+	option metric '2'
+	option weight '1'
+
+config policy 'failover'
+	list use_member 'wan2_m1'
+	list use_member 'wan_m2'
+	option last_resort 'default'
+
+config rule 'default_rule'
+	option dest_ip '0.0.0.0/0'
+	option use_policy 'failover'
+	option proto 'all'
+
+config globals 'globals'
+	option local_source 'none'
+
+package mwan3-opkg
+
+config globals 'globals'
+	option mmx_mask '0x3F00'
+
+config interface 'wan'
+	option enabled '1'
+	list track_ip '1.0.0.1'
+	list track_ip '1.1.1.1'
+	list track_ip '208.67.222.222'
+	list track_ip '208.67.220.220'
+	option family 'ipv4'
+	option reliability '2'
+
+config interface 'wan6'
+	option enabled '0'
+	list track_ip '2606:4700:4700::1001'
+	list track_ip '2606:4700:4700::1111'
+	list track_ip '2620:0:ccd::2'
+	list track_ip '2620:0:ccc::2'
+	option family 'ipv6'
+	option reliability '2'
+
+config interface 'wanb'
+	option enabled '0'
+	list track_ip '1.0.0.1'
+	list track_ip '1.1.1.1'
+	list track_ip '208.67.222.222'
+	list track_ip '208.67.220.220'
+	option family 'ipv4'
+	option reliability '1'
+
+config interface 'wanb6'
+	option enabled '0'
+	list track_ip '2606:4700:4700::1001'
+	list track_ip '2606:4700:4700::1111'
+	list track_ip '2620:0:ccd::2'
+	list track_ip '2620:0:ccc::2'
+	option family 'ipv6'
+	option reliability '1'
+
+config member 'wan_m1_w3'
+	option interface 'wan'
+	option metric '1'
+	option weight '3'
+
+config member 'wan_m2_w3'
+	option interface 'wan'
+	option metric '2'
+	option weight '3'
+
+config member 'wanb_m1_w2'
+	option interface 'wanb'
+	option metric '1'
+	option weight '2'
+
+config member 'wanb_m1_w3'
+	option interface 'wanb'
+	option metric '1'
+	option weight '3'
+
+config member 'wanb_m2_w2'
+	option interface 'wanb'
+	option metric '2'
+	option weight '2'
+
+config member 'wan6_m1_w3'
+	option interface 'wan6'
+	option metric '1'
+	option weight '3'
+
+config member 'wan6_m2_w3'
+	option interface 'wan6'
+	option metric '2'
+	option weight '3'
+
+config member 'wanb6_m1_w2'
+	option interface 'wanb6'
+	option metric '1'
+	option weight '2'
+
+config member 'wanb6_m1_w3'
+	option interface 'wanb6'
+	option metric '1'
+	option weight '3'
+
+config member 'wanb6_m2_w2'
+	option interface 'wanb6'
+	option metric '2'
+	option weight '2'
+
+config policy 'wan_only'
+	list use_member 'wan_m1_w3'
+	list use_member 'wan6_m1_w3'
+
+config policy 'wanb_only'
+	list use_member 'wanb_m1_w2'
+	list use_member 'wanb6_m1_w2'
+
+config policy 'balanced'
+	list use_member 'wan_m1_w3'
+	list use_member 'wanb_m1_w3'
+	list use_member 'wan6_m1_w3'
+	list use_member 'wanb6_m1_w3'
+
+config policy 'wan_wanb'
+	list use_member 'wan_m1_w3'
+	list use_member 'wanb_m2_w2'
+	list use_member 'wan6_m1_w3'
+	list use_member 'wanb6_m2_w2'
+
+config policy 'wanb_wan'
+	list use_member 'wan_m2_w3'
+	list use_member 'wanb_m1_w2'
+	list use_member 'wan6_m2_w3'
+	list use_member 'wanb6_m1_w2'
+
+config rule 'https'
+	option sticky '1'
+	option dest_port '443'
+	option proto 'tcp'
+	option use_policy 'balanced'
+
+config rule 'default_rule_v4'
+	option dest_ip '0.0.0.0/0'
+	option use_policy 'balanced'
+	option family 'ipv4'
+
+config rule 'default_rule_v6'
+	option dest_ip '::/0'
+	option use_policy 'balanced'
+	option family 'ipv6'
+
+package network
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fdf9:17a9:6fc3::/48'
+	option packet_steering '1'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'lan1'
+	list ports 'lan2'
+
+config interface 'lan'
+	option device 'br-lan.10'
+	option proto 'static'
+	option ipaddr '192.168.10.1'
+	option netmask '255.255.255.0'
+
+config interface 'wan'
+	option device 'br-lan.50'
+	option proto 'pppoe'
+	option username 'aa.abdullah'
+	option password '12345'
+	option ipv6 'auto'
+	option mtu '1492'
+	option metric '20'
+
+config interface 'iot'
+	option proto 'static'
+	option ipaddr '192.168.20.1'
+	option netmask '255.255.255.0'
+	option device 'br-lan.20'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '1'
+	list ports 'lan1:t'
+	list ports 'lan2:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '10'
+	list ports 'lan1:t'
+	list ports 'lan2:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '20'
+	list ports 'lan1:t'
+	list ports 'lan2:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '50'
+	list ports 'lan1:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '51'
+	list ports 'lan2:t'
+
+config interface 'mgmt'
+	option device 'br-lan.1'
+	option proto 'static'
+	option ipaddr '192.168.0.1'
+	option netmask '255.255.255.0'
+
+config interface 'wan2'
+	option device 'br-lan.51'
+	option proto 'dhcp'
+	option metric '10'
+	option auto '0'
+
+package rpcd
+
+config rpcd
+	option socket '/var/run/ubus/ubus.sock'
+	option timeout '30'
+
+config login
+	option username 'root'
+	option password '$p$root'
+	list read '*'
+	list write '*'
+
+package system
+
+config system
+	option hostname 'RouterF2'
+	option timezone '<+06>-6'
+	option ttylogin '0'
+	option log_size '256'
+	option urandom_seed '512'
+	option description 'Router for the 2nd floor (primary apartment)'
+	option notes 'Provides gateway, load-balancing/ISP fallback, access point, switch, VLAN capabilities'
+	option zonename 'Asia/Dhaka'
+	option log_proto 'udp'
+	option conloglevel '5'
+	option cronloglevel '5'
+
+config timeserver 'ntp'
+	list server '0.openwrt.pool.ntp.org'
+	list server '1.openwrt.pool.ntp.org'
+	list server '2.openwrt.pool.ntp.org'
+	list server '3.openwrt.pool.ntp.org'
+
+package ubihealthd
+
+config ubi-device 'ubi0'
+	option device '/dev/ubi0'
+	option enable '1'
+
+package ubootenv
+
+package uhttpd
+
+config uhttpd 'main'
+	list listen_http '0.0.0.0:80'
+	list listen_http '[::]:80'
+	list listen_https '0.0.0.0:443'
+	list listen_https '[::]:443'
+	option redirect_https '0'
+	option home '/www'
+	option rfc1918_filter '1'
+	option max_requests '3'
+	option max_connections '100'
+	option cert '/etc/uhttpd.crt'
+	option key '/etc/uhttpd.key'
+	option cgi_prefix '/cgi-bin'
+	list lua_prefix '/cgi-bin/luci=/usr/lib/lua/luci/sgi/uhttpd.lua'
+	option script_timeout '60'
+	option network_timeout '30'
+	option http_keepalive '20'
+	option tcp_keepalive '1'
+	option ubus_prefix '/ubus'
+
+config cert 'defaults'
+	option days '397'
+	option key_type 'ec'
+	option bits '2048'
+	option ec_curve 'P-256'
+	option country 'ZZ'
+	option state 'Somewhere'
+	option location 'Unknown'
+	option commonname 'OpenWrt'
+
+package wireless
+
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path 'platform/soc/18000000.wifi'
+	option band '2g'
+	option channel '11'
+	option htmode 'HE40'
+	option disabled '0'
+	option country 'BD'
+	option cell_density '1'
+	option noscan '1'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'Md Abdullah'
+	option encryption 'sae-mixed'
+	option key 'pomeranian24'
+
+config wifi-device 'radio1'
+	option type 'mac80211'
+	option path 'platform/soc/18000000.wifi+1'
+	option band '5g'
+	option channel '149'
+	option htmode 'HE80'
+	option disabled '0'
+	option country 'BD'
+	option cell_density '1'
+
+config wifi-iface 'default_radio1'
+	option device 'radio1'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'Md Abdullah 5G'
+	option encryption 'sae-mixed'
+	option key 'pomeranian24'
+
+config wifi-iface 'wifinet0'
+	option device 'radio0'
+	option mode 'ap'
+	option network 'iot'
+	option ssid 'Md Abdullah - IoT'
+	option encryption 'sae-mixed'
+	option key 'pomeranian24'
+	option isolate '1'
+	option ocv '0'
+
+config wifi-iface 'wifinet1'
+	option device 'radio1'
+	option mode 'ap'
+	option network 'iot'
+	option ssid 'Md Abdullah - IoT 5G'
+	option encryption 'sae-mixed'
+	option key 'pomeranian24'
+	option isolate '1'
+	option ocv '0'
+
