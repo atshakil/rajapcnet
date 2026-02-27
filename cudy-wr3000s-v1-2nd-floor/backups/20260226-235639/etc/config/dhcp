@@ -55,7 +55,7 @@ config dhcp 'mgmt'
 
 config host
 	option name 'RaspberryPi-CNC'
-	option mac 'b8:27:eb:58:73:0e'
+	option mac 'b8:27:eb:0d:26:5b'
 	option ip '192.168.10.250'
 	option dns '1'
 

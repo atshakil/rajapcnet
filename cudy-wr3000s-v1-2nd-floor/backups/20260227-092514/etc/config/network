@@ -1,0 +1,78 @@
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fdf9:17a9:6fc3::/48'
+	option packet_steering '1'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'lan1'
+	list ports 'lan2'
+
+config interface 'lan'
+	option device 'br-lan.10'
+	option proto 'static'
+	option ipaddr '192.168.10.1'
+	option netmask '255.255.255.0'
+
+config interface 'wan'
+	option device 'br-lan.50'
+	option proto 'pppoe'
+	option username 'aa.abdullah'
+	option password '12345'
+	option ipv6 'auto'
+	option mtu '1492'
+	option metric '20'
+
+config interface 'iot'
+	option proto 'static'
+	option ipaddr '192.168.20.1'
+	option netmask '255.255.255.0'
+	option device 'br-lan.20'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '1'
+	list ports 'lan1:t'
+	list ports 'lan2:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '10'
+	list ports 'lan1:t'
+	list ports 'lan2:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '20'
+	list ports 'lan1:t'
+	list ports 'lan2:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '50'
+	list ports 'lan1:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '51'
+	list ports 'lan2:t'
+
+config interface 'mgmt'
+	option device 'br-lan.1'
+	option proto 'static'
+	option ipaddr '192.168.0.1'
+	option netmask '255.255.255.0'
+
+config interface 'wan2'
+	option device 'br-lan.51'
+	option proto 'dhcp'
+	option metric '10'
+	option auto '0'
+

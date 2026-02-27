@@ -254,7 +254,8 @@ Saves timestamped backup to `backups/YYYYMMDD-HHMMSS/` with:
 |-----------|-------|
 | 20260220-185910 | Original factory + initial setup |
 | 20260224-091516 | Full VLAN + multi-WAN + optimizations |
-| 20260226-224405 | Post-restore + DHCP reservation (Pi CNC) + CNC→IoT firewall rule — current |
+| 20260226-235639 | Post-restore + DHCP reservation (Pi CNC, wlan0 MAC) + CNC→IoT firewall rule |
+| 20260227-092514 | IoT SSID password changed — current |
 
 ---
 

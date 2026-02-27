@@ -240,7 +240,8 @@ Saves timestamped backup to `backups/YYYYMMDD-HHMMSS/`.
 | 20260224-112758 | VLAN bridge + AP config (WAN=trunk, LAN4=emergency) |
 | 20260224-114329 | New port layout (WAN=Starlink, LAN1=trunk, LAN4=IoT+mgmt) |
 | 20260224-122545 | Optimizations (packet_steering, log_size=64, dnsmasq disabled) |
-| 20260226-224425 | LAN4 changed to VLAN 10 access port — current |
+| 20260226-224425 | LAN4 changed to VLAN 10 access port |
+| 20260227-092528 | IoT SSID password changed — current |
 
 ---
 

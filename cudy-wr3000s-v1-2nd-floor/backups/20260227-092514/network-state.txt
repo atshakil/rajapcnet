@@ -49,16 +49,16 @@
     link/ether 82:af:ca:b0:00:3d brd ff:ff:ff:ff:ff:ff
 14: phy0-ap0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master br-lan state UP group default qlen 1000
     link/ether 80:af:ca:b0:00:3c brd ff:ff:ff:ff:ff:ff
-15: phy0-ap1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master br-lan state UP group default qlen 1000
-    link/ether 82:af:ca:b0:00:3c brd ff:ff:ff:ff:ff:ff permaddr 80:af:ca:b0:00:3c
-16: phy1-ap1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master br-lan state UP group default qlen 1000
-    link/ether 86:af:ca:b0:00:3d brd ff:ff:ff:ff:ff:ff permaddr 82:af:ca:b0:00:3d
 17: pppoe-wan: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1484 qdisc fq_codel state UNKNOWN group default qlen 3
     link/ppp 
     inet 10.135.34.33 peer 10.135.0.1/32 scope global pppoe-wan
        valid_lft forever preferred_lft forever
     inet6 fe80::f929:eb68:5d59:a6cf peer fe80::6c21:3e18:f3:aea1/128 scope link nodad 
        valid_lft forever preferred_lft forever
+18: phy0-ap1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master br-lan state UP group default qlen 1000
+    link/ether 82:af:ca:b0:00:3c brd ff:ff:ff:ff:ff:ff permaddr 80:af:ca:b0:00:3c
+19: phy1-ap1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master br-lan state UP group default qlen 1000
+    link/ether 86:af:ca:b0:00:3d brd ff:ff:ff:ff:ff:ff permaddr 82:af:ca:b0:00:3d
 
 === ip route ===
 default via 10.135.0.1 dev pppoe-wan proto static metric 20 
@@ -74,9 +74,9 @@ phy0-ap0  ESSID: "Md Abdullah"
           Access Point: 80:AF:CA:B0:00:3C
           Mode: Master  Channel: 11 (2.462 GHz)  HT Mode: HE40
           Center Channel 1: 9 2: unknown
-          Tx-Power: 20 dBm  Link Quality: 45/70
-          Signal: -65 dBm  Noise: -92 dBm
-          Bit Rate: 143.1 MBit/s
+          Tx-Power: 20 dBm  Link Quality: 46/70
+          Signal: -64 dBm  Noise: -92 dBm
+          Bit Rate: 74.4 MBit/s
           Encryption: mixed WPA2/WPA3 PSK/SAE (CCMP)
           Type: nl80211  HW Mode(s): 802.11ax/b/g/n
           Hardware: embedded [MediaTek MT7981]
@@ -102,9 +102,9 @@ phy1-ap0  ESSID: "Md Abdullah 5G"
           Access Point: 82:AF:CA:B0:00:3D
           Mode: Master  Channel: 149 (5.745 GHz)  HT Mode: HE80
           Center Channel 1: 155 2: unknown
-          Tx-Power: 28 dBm  Link Quality: 28/70
-          Signal: -82 dBm  Noise: -92 dBm
-          Bit Rate: 450.1 MBit/s
+          Tx-Power: 28 dBm  Link Quality: 33/70
+          Signal: -77 dBm  Noise: -92 dBm
+          Bit Rate: 504.4 MBit/s
           Encryption: mixed WPA2/WPA3 PSK/SAE (CCMP)
           Type: nl80211  HW Mode(s): 802.11ac/ax/n
           Hardware: embedded [MediaTek MT7981]
@@ -134,7 +134,7 @@ phy1-ap1  ESSID: "Md Abdullah - IoT 5G"
 	"available": true,
 	"autostart": true,
 	"dynamic": false,
-	"uptime": 42198,
+	"uptime": 80667,
 	"l3_device": "pppoe-wan",
 	"proto": "pppoe",
 	"device": "br-lan.50",
