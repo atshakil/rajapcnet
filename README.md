@@ -206,6 +206,54 @@ Channel 11 selected over 6 because the HE40 secondary channel (below, ch 7-10) h
 
 <!-- TODO: Outline additional firewall rules and access control policies -->
 
+## NVR / Command & Control — Raspberry Pi 3B+
+
+### Hardware
+
+| Component | Detail |
+|-----------|--------|
+| **Model** | Raspberry Pi 3 Model B Plus Rev 1.3 |
+| **Hostname** | cyg |
+| **SoC** | BCM2837B0, Quad-core Cortex-A53 @ 1.4GHz (aarch64) |
+| **RAM** | 905 MB (1 GB nominal) |
+| **Boot disk** | 512 GB KIOXIA EXCERIA SATA SSD (via USB) — mounted at `/` |
+| **NVR storage** | 2 TB Seagate ST2000VX017 HDD (via USB) — mounted at `/mnt/nvr` |
+| **OS** | Raspberry Pi OS (Debian), kernel 6.12.62+rpt-rpi-v8 |
+| **Network** | WiFi (wlan0) on VLAN 10, IP `192.168.10.250/24` |
+| **Remote access** | Tailscale (`100.106.53.79`), SSH (`ssh admin@100.106.53.79`) |
+
+### System Configuration Changes
+
+#### 2026-03-03: Disabled Desktop Environment
+
+**Purpose**: Free ~80 MB RAM for NVR (Shinobi) headless operation.
+
+| Change | Command | Revert |
+|--------|---------|--------|
+| Set boot target to headless | `sudo systemctl set-default multi-user.target` | `sudo systemctl set-default graphical.target` |
+| Stop LightDM (immediate) | `sudo systemctl stop lightdm` | `sudo systemctl start lightdm` |
+
+**Impact**: SSH and Tailscale are unaffected (both are `multi-user.target` dependencies). Memory freed: ~80 MB (351 MB → 268 MB used). Desktop can be re-enabled at any time with the revert commands above.
+
+**Verification**: After change, confirmed:
+- Default target: `multi-user.target`
+- SSH: active
+- Tailscale: active
+- LAN connectivity: OK
+- Internet connectivity: OK
+- Available RAM: 637 MB (up from 554 MB)
+
+### VLAN 20 (IoT) Camera Access
+
+The Pi on VLAN 10 can reach VLAN 20 (192.168.20.0/24) via inter-VLAN routing on RouterF2. Firewall rules on RouterF2 permit this traffic.
+
+| IP | Hostname | Type | Ports | ONVIF |
+|----|----------|------|-------|-------|
+| 192.168.20.133 | IPC.lan | Camera | HTTP (80), RTSP (554) | — |
+| 192.168.20.162 | — | Hikvision | HTTP (80), HTTPS (443), RTSP (554) | Enabled |
+| 192.168.20.179 | — | Hikvision | HTTP (80), HTTPS (443), RTSP (554) | Enabled |
+| 192.168.20.197 | Garage.lan | Camera | HTTP (80), HTTPS (443), RTSP (554) | — |
+
 ## Monitoring & Management
 
 - **LuCI Web UI**: http://192.168.1.1 (from LAN/WiFi)
