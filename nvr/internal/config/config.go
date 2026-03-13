@@ -10,6 +10,7 @@ type Config struct {
 	ListenAddr   string
 	DatabasePath string
 	StoragePath  string
+	JWTSecret    string
 }
 
 func Load() *Config {
@@ -19,6 +20,7 @@ func Load() *Config {
 		ListenAddr:   getEnv("NVR_LISTEN", ":8080"),
 		DatabasePath: getEnv("NVR_DB_PATH", "nvr.db"),
 		StoragePath:  getEnv("NVR_STORAGE_PATH", "/mnt/nvr/recordings"),
+		JWTSecret:    getEnv("NVR_JWT_SECRET", "change-me-in-production"),
 	}
 }
 

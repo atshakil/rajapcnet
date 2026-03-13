@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVR</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --border: #2a2a2a;
+  --text: #e0e0e0; --muted: #888; --accent: #4a9eff; --danger: #ff4a4a;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* Login */
+.login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.login-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 2rem; width: 320px; }
+.login-box h1 { font-size: 1.25rem; margin-bottom: 1.5rem; text-align: center; }
+.login-box input { display: block; width: 100%; padding: 0.6rem 0.8rem; margin-bottom: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.9rem; }
+.login-box input:focus { outline: none; border-color: var(--accent); }
+.login-box button { display: block; width: 100%; padding: 0.6rem; background: var(--accent); color: #fff; border: none; border-radius: 4px; font-size: 0.9rem; cursor: pointer; }
+.login-box button:hover { opacity: 0.9; }
+.login-error { color: var(--danger); font-size: 0.8rem; margin-bottom: 0.5rem; text-align: center; }
+
+/* App shell */
+.app { display: none; flex-direction: column; height: 100vh; }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); }
+.topbar h1 { font-size: 1rem; font-weight: 600; }
+.topbar-actions { display: flex; gap: 0.5rem; align-items: center; }
+.topbar-actions button { background: none; border: 1px solid var(--border); color: var(--text); padding: 0.3rem 0.6rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.topbar-actions button:hover { border-color: var(--accent); }
+.topbar-actions button.active { border-color: var(--accent); background: rgba(74,158,255,0.1); }
+.user-badge { font-size: 0.8rem; color: var(--muted); }
+.btn-logout { color: var(--danger) !important; border-color: var(--danger) !important; }
+
+/* Video grid */
+.grid-wrap { flex: 1; padding: 0.5rem; overflow: auto; }
+.video-grid { display: grid; gap: 4px; height: 100%; }
+.grid-2x2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.grid-1x1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.cam-cell { background: #000; border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.cam-cell:hover { border-color: var(--accent); }
+.cam-label { position: absolute; top: 6px; left: 8px; font-size: 0.75rem; background: rgba(0,0,0,0.7); padding: 2px 6px; border-radius: 3px; }
+.cam-status { position: absolute; top: 6px; right: 8px; width: 8px; height: 8px; border-radius: 50%; }
+.cam-status.online { background: #4caf50; }
+.cam-status.offline { background: var(--danger); }
+.cam-placeholder { color: var(--muted); font-size: 0.85rem; }
+.cam-caps { position: absolute; bottom: 6px; left: 8px; display: flex; gap: 4px; }
+.cam-cap { font-size: 0.6rem; background: rgba(74,158,255,0.2); color: var(--accent); padding: 1px 4px; border-radius: 2px; }
+
+/* No cameras */
+.no-cameras { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login" class="login-wrap">
+  <form class="login-box" id="loginForm">
+    <h1>NVR Login</h1>
+    <div id="loginError" class="login-error" style="display:none"></div>
+    <input type="text" id="loginUser" placeholder="Username" autocomplete="username" required>
+    <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit">Sign In</button>
+  </form>
+</div>
+
+<!-- App -->
+<div id="app" class="app">
+  <div class="topbar">
+    <h1>NVR</h1>
+    <div class="topbar-actions">
+      <button id="btnGrid" class="active" title="2x2 Grid">Grid</button>
+      <button id="btnFull" title="Fullscreen single camera">Full</button>
+      <span class="user-badge" id="userBadge"></span>
+      <button class="btn-logout" id="btnLogout">Logout</button>
+    </div>
+  </div>
+  <div class="grid-wrap">
+    <div id="videoGrid" class="video-grid grid-2x2"></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let token = localStorage.getItem('nvr_token');
+let user = null;
+let cameras = [];
+let gridMode = '2x2';
+let selectedCam = null;
+
+// Auth
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...opts.headers };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const resp = await fetch(API + path, { ...opts, headers });
+  if (resp.status === 401) { logout(); throw new Error('unauthorized'); }
+  return resp;
+}
+
+async function login(username, password) {
+  const resp = await fetch(API + '/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text.trim() || 'Login failed');
+  }
+  const data = await resp.json();
+  token = data.token;
+  user = data.user;
+  localStorage.setItem('nvr_token', token);
+  showApp();
+}
+
+function logout() {
+  token = null;
+  user = null;
+  localStorage.removeItem('nvr_token');
+  document.getElementById('login').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+// App
+async function showApp() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('userBadge').textContent = user ? user.username + ' (' + user.role + ')' : '';
+  await loadCameras();
+}
+
+async function loadCameras() {
+  try {
+    const resp = await api('/api/cameras');
+    cameras = await resp.json();
+    renderGrid();
+  } catch (e) {
+    console.error('Failed to load cameras:', e);
+  }
+}
+
+function renderGrid() {
+  const grid = document.getElementById('videoGrid');
+  grid.innerHTML = '';
+
+  if (cameras.length === 0) {
+    grid.className = 'video-grid grid-1x1';
+    grid.innerHTML = '<div class="no-cameras">No cameras configured. Use nvrctl to add cameras.</div>';
+    return;
+  }
+
+  if (gridMode === '1x1' && selectedCam !== null) {
+    grid.className = 'video-grid grid-1x1';
+    const cam = cameras.find(c => c.id === selectedCam) || cameras[0];
+    grid.appendChild(createCamCell(cam));
+  } else {
+    grid.className = 'video-grid grid-2x2';
+    const show = cameras.slice(0, 4);
+    show.forEach(cam => grid.appendChild(createCamCell(cam)));
+  }
+}
+
+function createCamCell(cam) {
+  const cell = document.createElement('div');
+  cell.className = 'cam-cell';
+  cell.onclick = () => {
+    if (gridMode === '2x2') {
+      selectedCam = cam.id;
+      setGrid('1x1');
+    } else {
+      setGrid('2x2');
+    }
+  };
+
+  const label = document.createElement('span');
+  label.className = 'cam-label';
+  label.textContent = cam.name;
+  cell.appendChild(label);
+
+  const status = document.createElement('span');
+  status.className = 'cam-status ' + (cam.enabled ? 'online' : 'offline');
+  cell.appendChild(status);
+
+  const ph = document.createElement('span');
+  ph.className = 'cam-placeholder';
+  const info = [cam.manufacturer, cam.model].filter(Boolean).join(' ');
+  ph.textContent = info || cam.ip;
+  cell.appendChild(ph);
+
+  // Capability badges
+  const caps = document.createElement('div');
+  caps.className = 'cam-caps';
+  if (cam.has_onvif) addCap(caps, 'ONVIF');
+  if (cam.has_ptz) addCap(caps, 'PTZ');
+  if (cam.has_motion) addCap(caps, 'Motion');
+  if (cam.has_infrared) addCap(caps, 'IR');
+  if (cam.has_floodlight) addCap(caps, 'Light');
+  cell.appendChild(caps);
+
+  return cell;
+}
+
+function addCap(parent, text) {
+  const el = document.createElement('span');
+  el.className = 'cam-cap';
+  el.textContent = text;
+  parent.appendChild(el);
+}
+
+function setGrid(mode) {
+  gridMode = mode;
+  document.getElementById('btnGrid').classList.toggle('active', mode === '2x2');
+  document.getElementById('btnFull').classList.toggle('active', mode === '1x1');
+  renderGrid();
+}
+
+// Init
+document.getElementById('loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  try {
+    await login(document.getElementById('loginUser').value, document.getElementById('loginPass').value);
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+};
+
+document.getElementById('btnGrid').onclick = () => setGrid('2x2');
+document.getElementById('btnFull').onclick = () => { if (cameras.length > 0) { selectedCam = selectedCam || cameras[0].id; setGrid('1x1'); }};
+document.getElementById('btnLogout').onclick = logout;
+
+// Check existing token
+(async () => {
+  if (token) {
+    try {
+      const resp = await api('/api/cameras');
+      if (resp.ok) {
+        cameras = await resp.json();
+        user = { username: '...', role: '...' }; // Will be refreshed
+        showApp();
+        return;
+      }
+    } catch (e) {}
+    logout();
+  }
+})();
+</script>
+</body>
+</html>

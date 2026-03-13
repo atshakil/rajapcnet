@@ -15,4 +15,17 @@ type Camera struct {
 	Enabled    bool      `json:"enabled"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+
+	// Capabilities discovered via ONVIF
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Firmware     string `json:"firmware,omitempty"`
+	HasONVIF     bool   `json:"has_onvif"`
+	HasPTZ       bool   `json:"has_ptz"`
+	HasMotion    bool   `json:"has_motion"`
+	HasInfrared  bool   `json:"has_infrared"`
+	HasFloodlight bool  `json:"has_floodlight"`
+	HasIndicator bool   `json:"has_indicator"`
+	Resolutions  string `json:"resolutions,omitempty"`  // JSON array stored as text
+	StreamURIs   string `json:"stream_uris,omitempty"`  // JSON array stored as text
 }

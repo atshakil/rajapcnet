@@ -12,8 +12,9 @@ import (
 )
 
 type Client struct {
-	base   string
-	http   *http.Client
+	base  string
+	http  *http.Client
+	token string
 }
 
 func New(baseURL string) *Client {
@@ -21,6 +22,10 @@ func New(baseURL string) *Client {
 		base: baseURL,
 		http: &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+func (c *Client) SetToken(token string) {
+	c.token = token
 }
 
 func (c *Client) Health() (string, error) {
@@ -93,6 +98,65 @@ func (c *Client) DeleteCamera(id string) error {
 	return nil
 }
 
+// ── Users ──
+
+func (c *Client) ListUsers() ([]model.User, error) {
+	resp, err := c.get("/api/users")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var users []model.User
+	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+func (c *Client) GetUser(id string) (*model.User, error) {
+	resp, err := c.get("/api/users/" + id)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var u model.User
+	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (c *Client) AddUser(u *model.User) (*model.User, error) {
+	resp, err := c.postJSON("/api/users", u)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var result model.User
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) UpdateUser(id string, u *model.User) error {
+	resp, err := c.putJSON("/api/users/"+id, u)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+func (c *Client) DeleteUser(id string) error {
+	resp, err := c.do("DELETE", "/api/users/"+id, nil)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
 func (c *Client) get(path string) (*http.Response, error) {
 	return c.do("GET", path, nil)
 }
@@ -120,6 +184,9 @@ func (c *Client) do(method, path string, body io.Reader) (*http.Response, error)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
