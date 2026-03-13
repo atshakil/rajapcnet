@@ -1,0 +1,16 @@
+[Unit]
+Description=NVR Camera Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+EnvironmentFile=-/opt/nvr/.env
+ExecStart=/opt/nvr/nvr
+WorkingDirectory=/opt/nvr
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
