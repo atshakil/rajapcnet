@@ -243,6 +243,48 @@ Channel 11 selected over 6 because the HE40 secondary channel (below, ch 7-10) h
 - Internet connectivity: OK
 - Available RAM: 637 MB (up from 554 MB)
 
+#### 2026-03-09: WiFi Connection Cleanup
+
+**Purpose**: Remove conflicting NetworkManager WiFi connections that caused unreliable boot.
+
+| Change | Command | Revert |
+|--------|---------|--------|
+| Deleted duplicate `Md Abdullah 5G` connection | `sudo nmcli con delete uuid 3543bc18-4c58-4eab-8802-53756b9af660` | Re-create if needed |
+| Deleted stale `netplan-wlan0-Zigby` connection | `sudo nmcli con delete uuid 0973ccb4-b526-3131-988b-c9882962feb4` | Re-create if needed |
+| Set autoconnect priority on `Md-Abdullah-5G` | `sudo nmcli con modify Md-Abdullah-5G connection.autoconnect-priority 100` | `sudo nmcli con modify Md-Abdullah-5G connection.autoconnect-priority 0` |
+
+#### 2026-03-10: Enabled Persistent Journal
+
+**Purpose**: Preserve boot logs across reboots for diagnostics. RPi OS defaults to volatile (RAM-only) journal via `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf`.
+
+**Config**: Drop-in at `/etc/systemd/journald.conf.d/persistent.conf`:
+```ini
+[Journal]
+Storage=persistent
+SystemMaxUse=1G
+SystemMaxFileSize=128M
+MaxRetentionSec=15day
+Compress=yes
+```
+
+| Limit | Value | Effect |
+|-------|-------|--------|
+| Max total size | 1 GB | Oldest entries purged when exceeded |
+| Max file size | 128 MB | Rotates individual journal files |
+| Max retention | 15 days | Entries older than 15 days deleted |
+
+**Revert**: `sudo rm /etc/systemd/journald.conf.d/persistent.conf && sudo systemctl restart systemd-journald`
+
+### Known Issues
+
+#### Pi 3B+ Fails to Boot After `sudo reboot` (USB Boot Hang)
+
+On warm reboot (`sudo reboot`), the Pi firmware resets the SoC but does NOT fully power-cycle the USB bus. The JMS583 USB-to-SATA bridge (SSD enclosure) fails to re-enumerate, so the firmware cannot find the boot partition. **Only a full power cycle recovers the system.**
+
+- **Root cause**: Pi 3B+ dwc_otg USB controller + JMS583 bridge incompatibility on warm reset
+- **Workaround**: Never use `sudo reboot`. Use `sudo poweroff` + physical power cycle, or configure a USB hub with per-port power switching.
+- **Additional factor**: Under-voltage detected (`throttled=0xd0008`). PSU may be marginal for two 500mA USB devices. `max_usb_current=1` in config.txt is not set.
+
 ### VLAN 20 (IoT) Camera Access
 
 The Pi on VLAN 10 can reach VLAN 20 (192.168.20.0/24) via inter-VLAN routing on RouterF2. Firewall rules on RouterF2 permit this traffic.
