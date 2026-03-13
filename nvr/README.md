@@ -10,26 +10,41 @@ Lightweight camera streaming and recording manager. Built in Go with SQLite, des
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and configure your target host and paths.
-2. Run `make setup-pi` once to prepare the target.
+1. Copy `.env.client.example` to `.env.client` and configure your target host and paths.
+2. Copy `.env.host.example` to `.env.host` for the target's runtime config.
+3. Run `make setup-pi` once to prepare the target.
 
 ## Development
 
 ```bash
-# Single command: build, deploy, restart, watch for changes
+# Single command: build, deploy, enable, watch for changes
 make dev
 
 # Or individual steps:
-make build          # cross-compile for target
+make build          # cross-compile daemon + CLI for target, build CLI for local
 make deploy         # build + scp to target
 make restart        # restart service on target
+make stop           # stop service on target
+make enable         # start + enable boot persistence
+make disable        # stop + disable boot persistence
 make run            # run locally
 
 # One-time target setup
 make setup-pi
 ```
 
-Configuration is via environment variables. See `.env.example` for available options.
+## CLI
+
+```bash
+# On Mac (uses .env.client → remote daemon)
+bin/nvrctl health
+bin/nvrctl cameras ls
+
+# On Pi (uses .env.host → localhost daemon)
+/opt/nvr/nvrctl cameras status
+```
+
+Configuration is via environment variables. See `.env.client.example` and `.env.host.example`.
 
 ## API
 

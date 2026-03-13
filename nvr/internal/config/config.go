@@ -13,7 +13,7 @@ type Config struct {
 }
 
 func Load() *Config {
-	_ = godotenv.Load()
+	_ = godotenv.Load(".env.host")
 
 	return &Config{
 		ListenAddr:   getEnv("NVR_LISTEN", ":8080"),

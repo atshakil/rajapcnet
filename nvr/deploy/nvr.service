@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=admin
-EnvironmentFile=-/opt/nvr/.env
+EnvironmentFile=-/opt/nvr/.env.host
 ExecStart=/opt/nvr/nvr
 WorkingDirectory=/opt/nvr
 Restart=on-failure

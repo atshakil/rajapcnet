@@ -3,4 +3,5 @@ bin/
 *.db-journal
 *.db-wal
 *.db-shm
-.env
+.env.host
+.env.client
