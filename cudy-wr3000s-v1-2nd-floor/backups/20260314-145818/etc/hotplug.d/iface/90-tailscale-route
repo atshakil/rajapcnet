@@ -1,0 +1,8 @@
+#!/bin/sh
+# Ensure tailscale traffic uses table 52 instead of MWAN3 table 1
+# This must run before MWAN3 rule 2001 catches fwmark 0x100 traffic
+if [ "$ACTION" = "ifup" ] || [ "$ACTION" = "ifupdate" ]; then
+    if ! ip rule show | grep -q "1999.*100.64.0.0/10.*lookup 52"; then
+        ip rule add to 100.64.0.0/10 lookup 52 priority 1999
+    fi
+fi

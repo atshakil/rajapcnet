@@ -34,6 +34,7 @@ EXTRA_FILES=(
     /etc/hosts
     /etc/passwd
     /etc/dropbear/authorized_keys
+    /etc/hotplug.d/iface/90-tailscale-route
 )
 
 # --- Functions ---

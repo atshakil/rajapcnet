@@ -82,9 +82,9 @@ phy0-ap0  ESSID: "Md Abdullah"
           Access Point: 80:AF:CA:B0:00:3C
           Mode: Master  Channel: 11 (2.462 GHz)  HT Mode: HE40
           Center Channel 1: 9 2: unknown
-          Tx-Power: 20 dBm  Link Quality: 40/70
-          Signal: -70 dBm  Noise: -92 dBm
-          Bit Rate: 86.5 MBit/s
+          Tx-Power: 20 dBm  Link Quality: 34/70
+          Signal: -76 dBm  Noise: -92 dBm
+          Bit Rate: 35.5 MBit/s
           Encryption: mixed WPA2/WPA3 PSK/SAE (CCMP)
           Type: nl80211  HW Mode(s): 802.11ax/b/g/n
           Hardware: embedded [MediaTek MT7981]
@@ -142,7 +142,7 @@ phy1-ap1  ESSID: "Md Abdullah - IoT 5G"
 	"available": true,
 	"autostart": true,
 	"dynamic": false,
-	"uptime": 903,
+	"uptime": 1502,
 	"l3_device": "pppoe-wan",
 	"proto": "pppoe",
 	"device": "br-lan.50",
