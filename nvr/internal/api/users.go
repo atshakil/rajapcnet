@@ -31,6 +31,17 @@ func (h *handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, users)
 }
 
+// bootstrap allows creating the first admin user when no users exist.
+func (h *handler) bootstrap(w http.ResponseWriter, r *http.Request) {
+	var count int
+	h.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	if count > 0 {
+		http.Error(w, "bootstrap disabled — users already exist", http.StatusForbidden)
+		return
+	}
+	h.addUser(w, r)
+}
+
 func (h *handler) addUser(w http.ResponseWriter, r *http.Request) {
 	var u model.User
 	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {

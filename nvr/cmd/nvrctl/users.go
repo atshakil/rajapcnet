@@ -23,6 +23,46 @@ Actions:
 	os.Exit(1)
 }
 
+func cmdBootstrap(c *client.Client) error {
+	if len(os.Args) < 4 {
+		return fmt.Errorf("usage: nvrctl bootstrap <username> <password>")
+	}
+	u := &model.User{
+		Username: os.Args[2],
+		Password: os.Args[3],
+		Role:     model.RoleAdmin,
+	}
+	result, err := c.Bootstrap(u)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Bootstrapped admin user %d: %s\n", result.ID, result.Username)
+	return nil
+}
+
+func cmdLogin(c *client.Client) error {
+	if len(os.Args) < 4 {
+		return fmt.Errorf("usage: nvrctl login <username> <password>")
+	}
+	token, err := c.Login(os.Args[2], os.Args[3])
+	if err != nil {
+		return err
+	}
+	if err := saveToken(token); err != nil {
+		return fmt.Errorf("save token: %v", err)
+	}
+	fmt.Println("Logged in.")
+	return nil
+}
+
+func cmdLogout() error {
+	if err := os.Remove(tokenPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	fmt.Println("Logged out.")
+	return nil
+}
+
 func cmdUsersList(c *client.Client) error {
 	users, err := c.ListUsers()
 	if err != nil {

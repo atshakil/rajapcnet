@@ -25,6 +25,7 @@ func NewServer(db *sql.DB, cfg *config.Config) *http.Server {
 	// Public
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("POST /api/login", h.login)
+	mux.HandleFunc("POST /api/bootstrap", h.bootstrap)
 
 	// Protected API — requires valid JWT
 	api := http.NewServeMux()
@@ -41,8 +42,8 @@ func NewServer(db *sql.DB, cfg *config.Config) *http.Server {
 
 	mux.Handle("/api/", h.authMiddleware(api))
 
-	// Static web UI
-	mux.HandleFunc("GET /", h.serveWeb)
+	// Static web UI (less specific path than /api/, so API routes win)
+	mux.HandleFunc("/", h.serveWeb)
 
 	return &http.Server{
 		Addr:    cfg.ListenAddr,

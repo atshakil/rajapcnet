@@ -139,6 +139,37 @@ func (c *Client) AddUser(u *model.User) (*model.User, error) {
 	return &result, nil
 }
 
+func (c *Client) Bootstrap(u *model.User) (*model.User, error) {
+	resp, err := c.postJSON("/api/bootstrap", u)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var result model.User
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) Login(username, password string) (string, error) {
+	resp, err := c.postJSON("/api/login", map[string]string{
+		"username": username,
+		"password": password,
+	})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	return result.Token, nil
+}
+
 func (c *Client) UpdateUser(id string, u *model.User) error {
 	resp, err := c.putJSON("/api/users/"+id, u)
 	if err != nil {

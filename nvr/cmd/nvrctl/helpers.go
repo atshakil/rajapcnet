@@ -6,11 +6,33 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 var scanner = bufio.NewScanner(os.Stdin)
+
+func tokenPath() string {
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "nvrctl", "token")
+}
+
+func loadToken() string {
+	data, err := os.ReadFile(tokenPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func saveToken(token string) error {
+	p := tokenPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(token), 0600)
+}
 
 func prompt(label, defaultVal string) string {
 	if defaultVal != "" {

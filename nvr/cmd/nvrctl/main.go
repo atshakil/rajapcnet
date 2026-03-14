@@ -24,6 +24,11 @@ func main() {
 
 	c := client.New(base)
 
+	// Load cached token for authenticated commands
+	if token := loadToken(); token != "" {
+		c.SetToken(token)
+	}
+
 	if len(os.Args) < 2 {
 		usage()
 	}
@@ -32,6 +37,12 @@ func main() {
 	switch os.Args[1] {
 	case "health":
 		err = cmdHealth(c)
+	case "login":
+		err = cmdLogin(c)
+	case "logout":
+		err = cmdLogout()
+	case "bootstrap":
+		err = cmdBootstrap(c)
 	case "cameras":
 		if len(os.Args) < 3 {
 			camerasUsage()
@@ -87,6 +98,9 @@ func usage() {
 
 Commands:
   health             Check NVR server health
+  login <u> <p>      Authenticate and cache token
+  logout             Remove cached token
+  bootstrap <u> <p>  Create first admin user (one-time)
   cameras <action>   Manage cameras
   users <action>     Manage users (admin)
 
