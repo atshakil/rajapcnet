@@ -7,17 +7,28 @@ SERVICE := nvr
 PI_HOST := $(NVR_PI_HOST)
 PI_PATH := $(NVR_PI_PATH)
 
-.PHONY: build deploy restart dev clean run setup-pi
+# Strip debug symbols (DWARF + symbol table) from Pi binaries to reduce size ~30%.
+# Stack traces with file:line still work — Go's pclntab is preserved.
+# To restore debug symbols, remove $(STRIP) from the build commands below.
+STRIP := -ldflags='-s -w'
+
+.PHONY: build deploy restart dev clean run setup-pi setup-mac
 
 build:
-	GOOS=linux GOARCH=arm64 go build -o bin/$(BINARY) ./cmd/nvr
-	GOOS=linux GOARCH=arm64 go build -o bin/.$(CTL) ./cmd/nvrctl
-	go build -o bin/$(CTL) ./cmd/nvrctl
+	GOOS=linux GOARCH=arm64 go build $(STRIP) -o bin/$(BINARY) ./cmd/nvr
+	GOOS=linux GOARCH=arm64 go build $(STRIP) -o bin/.$(CTL) ./cmd/nvrctl
+	go build -o bin/$(CTL) ./cmd/nvrctl  # Mac native: keep debug symbols
 
 deploy: build
-	scp -q bin/$(BINARY) $(PI_HOST):$(PI_PATH)/$(BINARY).new
-	scp -q bin/.$(CTL) $(PI_HOST):$(PI_PATH)/$(CTL).new
-	ssh $(PI_HOST) 'mv $(PI_PATH)/$(BINARY).new $(PI_PATH)/$(BINARY) && mv $(PI_PATH)/$(CTL).new $(PI_PATH)/$(CTL)'
+	rsync -z bin/$(BINARY) bin/.$(CTL) $(PI_HOST):$(PI_PATH)/
+	ssh $(PI_HOST) 'mv $(PI_PATH)/.$(CTL) $(PI_PATH)/$(CTL)'
+
+## Fast deploy for dev loop — builds ARM64 binaries, rsync delta, restart
+deploy-fast:
+	GOOS=linux GOARCH=arm64 go build $(STRIP) -o bin/$(BINARY) ./cmd/nvr
+	GOOS=linux GOARCH=arm64 go build $(STRIP) -o bin/.$(CTL) ./cmd/nvrctl
+	rsync -z bin/$(BINARY) bin/.$(CTL) $(PI_HOST):$(PI_PATH)/
+	ssh $(PI_HOST) 'mv $(PI_PATH)/.$(CTL) $(PI_PATH)/$(CTL) && sudo systemctl restart $(SERVICE)'
 
 restart:
 	ssh $(PI_HOST) 'sudo systemctl restart $(SERVICE)'
@@ -34,10 +45,11 @@ disable:
 ## Single dev command: build, deploy, restart, then watch for changes
 dev: deploy enable
 	@echo "\n==> Deployed and running. Watching for changes... (Ctrl+C to stop)"
-	@fswatch -1 -r -e '.*' -i '\.go$$' cmd/ internal/ | while read -r _; do \
+	@which fswatch > /dev/null 2>&1 || { echo "error: fswatch not found — run 'make setup-mac' first"; exit 1; }
+	@while true; do \
+		fswatch -1 -r -e '.*' -i '\.go$$' cmd/ internal/; \
 		echo "\n==> Change detected, rebuilding..."; \
-		$(MAKE) -s deploy restart && echo "==> Deployed" || echo "==> Build failed"; \
-		fswatch -1 -r -e '.*' -i '\.go$$' cmd/ internal/ > /dev/null; \
+		$(MAKE) -s deploy-fast && echo "==> Deployed" || echo "==> Build failed"; \
 	done
 
 clean:
@@ -45,6 +57,12 @@ clean:
 
 run:
 	go run ./cmd/nvr
+
+## Install dev dependencies on macOS
+setup-mac:
+	@echo "Installing dev dependencies..."
+	@which fswatch > /dev/null 2>&1 || brew install fswatch
+	@echo "Done."
 
 setup-pi:
 	ssh $(PI_HOST) 'sudo mkdir -p $(PI_PATH) && sudo chown admin:admin $(PI_PATH)'
