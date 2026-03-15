@@ -1,0 +1,8 @@
+#!/bin/sh
+# Ensure tailscale traffic uses table 52 instead of MWAN3 table 1
+# Priority 999: must run before MWAN3 rule 1001 (iif pppoe-wan)
+if [ "$ACTION" = "ifup" ] || [ "$ACTION" = "ifupdate" ]; then
+    if ! ip rule show | grep -q "999.*100.64.0.0/10.*lookup 52"; then
+        ip rule add to 100.64.0.0/10 lookup 52 priority 999
+    fi
+fi
