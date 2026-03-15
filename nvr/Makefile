@@ -20,14 +20,14 @@ build:
 	go build -o bin/$(CTL) ./cmd/nvrctl  # Mac native: keep debug symbols
 
 deploy: build
-	rsync -z bin/$(BINARY) bin/.$(CTL) $(PI_HOST):$(PI_PATH)/
+	rsync -z bin/$(BINARY) bin/.$(CTL) .env.host $(PI_HOST):$(PI_PATH)/
 	ssh $(PI_HOST) 'mv $(PI_PATH)/.$(CTL) $(PI_PATH)/$(CTL)'
 
 ## Fast deploy for dev loop — builds ARM64 binaries, rsync delta, restart
 deploy-fast:
 	GOOS=linux GOARCH=arm64 go build $(STRIP) -o bin/$(BINARY) ./cmd/nvr
 	GOOS=linux GOARCH=arm64 go build $(STRIP) -o bin/.$(CTL) ./cmd/nvrctl
-	rsync -z bin/$(BINARY) bin/.$(CTL) $(PI_HOST):$(PI_PATH)/
+	rsync -z bin/$(BINARY) bin/.$(CTL) .env.host $(PI_HOST):$(PI_PATH)/
 	ssh $(PI_HOST) 'mv $(PI_PATH)/.$(CTL) $(PI_PATH)/$(CTL) && sudo systemctl restart $(SERVICE)'
 
 restart:
