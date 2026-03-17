@@ -47,6 +47,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .cam-placeholder { color: var(--muted); font-size: 0.85rem; }
 .cam-caps { position: absolute; bottom: 6px; left: 8px; display: flex; gap: 4px; }
 .cam-cap { font-size: 0.6rem; background: rgba(74,158,255,0.2); color: var(--accent); padding: 1px 4px; border-radius: 2px; }
+.cam-video { width: 100%; height: 100%; object-fit: cover; display: none; }
 
 /* No cameras */
 .no-cameras { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); }
@@ -143,6 +144,7 @@ async function loadCameras() {
 
 function renderGrid() {
   const grid = document.getElementById('videoGrid');
+  Array.from(grid.children).forEach(cell => { if (cell._cleanup) cell._cleanup(); });
   grid.innerHTML = '';
 
   if (cameras.length === 0) {
@@ -188,6 +190,33 @@ function createCamCell(cam) {
   const info = [cam.manufacturer, cam.model].filter(Boolean).join(' ');
   ph.textContent = info || cam.ip;
   cell.appendChild(ph);
+
+  const img = document.createElement('img');
+  img.className = 'cam-video';
+  cell.appendChild(img);
+
+  let snapTimer = null;
+  async function refreshSnap() {
+    try {
+      const resp = await fetch(`/api/cameras/${cam.id}/snapshot`, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!resp.ok) return;
+      const blob = await resp.blob();
+      const newSrc = URL.createObjectURL(blob);
+      const old = img.src;
+      img.src = newSrc;
+      img.style.display = 'block';
+      ph.style.display = 'none';
+      if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+    } catch (e) {}
+  }
+  refreshSnap();
+  snapTimer = setInterval(refreshSnap, 2000);
+  cell._cleanup = () => {
+    clearInterval(snapTimer);
+    if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+  };
 
   // Capability badges
   const caps = document.createElement('div');

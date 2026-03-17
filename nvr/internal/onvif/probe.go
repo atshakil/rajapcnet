@@ -2,8 +2,8 @@ package onvif
 
 import (
 	"bytes"
-	"crypto/sha1"
-	"encoding/base64"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -22,8 +22,9 @@ type ProbeResult struct {
 	HasPTZ       bool
 	HasMotion    bool
 	HasInfrared  bool
-	Resolutions  []string
-	StreamURIs   []string
+	Resolutions   []string
+	StreamURIs    []string
+	SnapshotURIs  []string
 }
 
 type deviceInfoResp struct {
@@ -88,6 +89,17 @@ type streamURIResp struct {
 	} `xml:"Body"`
 }
 
+type snapshotURIResp struct {
+	XMLName xml.Name `xml:"Envelope"`
+	Body    struct {
+		Resp struct {
+			MediaURI struct {
+				URI string `xml:"Uri"`
+			} `xml:"MediaUri"`
+		} `xml:"GetSnapshotUriResponse"`
+	} `xml:"Body"`
+}
+
 // Probe connects to a camera via ONVIF and discovers its capabilities.
 func Probe(ip string, port int, onvifPath, username, password string) (*ProbeResult, error) {
 	baseURL := fmt.Sprintf("http://%s:%d%s", ip, port, onvifPath)
@@ -102,28 +114,25 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 	result := &ProbeResult{}
 
 	// 1. GetDeviceInformation
-	devReq := soapEnvelope(username, password, `
-		<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>
-	`)
 	var devInfo deviceInfoResp
-	if err := soapCall(baseURL, devReq, &devInfo); err == nil {
+	if err := soapCallAuth(baseURL,
+		cleanEnvelope(`<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>`),
+		"http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation",
+		username, password, &devInfo); err == nil {
 		result.HasONVIF = true
 		result.Manufacturer = devInfo.Body.Resp.Manufacturer
 		result.Model = devInfo.Body.Resp.Model
 		result.Firmware = devInfo.Body.Resp.FirmwareVersion
 	} else {
-		// Not ONVIF capable or bad credentials
-		return result, nil
+		return result, fmt.Errorf("ONVIF probe: %w", err)
 	}
 
 	// 2. GetCapabilities
-	capReq := soapEnvelope(username, password, `
-		<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
-			<tds:Category>All</tds:Category>
-		</tds:GetCapabilities>
-	`)
 	var caps capabilitiesResp
-	if err := soapCall(baseURL, capReq, &caps); err == nil {
+	if err := soapCallAuth(baseURL,
+		cleanEnvelope(`<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>All</tds:Category></tds:GetCapabilities>`),
+		"http://www.onvif.org/ver10/device/wsdl/GetCapabilities",
+		username, password, &caps); err == nil {
 		if caps.Body.Resp.Capabilities.PTZ != nil {
 			result.HasPTZ = true
 		}
@@ -141,11 +150,11 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 		mediaURL = caps.Body.Resp.Capabilities.Media.XAddr
 	}
 
-	profReq := soapEnvelope(username, password, `
-		<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>
-	`)
 	var profiles profilesResp
-	if err := soapCall(mediaURL, profReq, &profiles); err == nil {
+	if err := soapCallAuth(mediaURL,
+		cleanEnvelope(`<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`),
+		"http://www.onvif.org/ver10/media/wsdl/GetProfiles",
+		username, password, &profiles); err == nil {
 		for _, p := range profiles.Body.Resp.Profiles {
 			if p.Video != nil {
 				res := fmt.Sprintf("%dx%d", p.Video.Resolution.Width, p.Video.Resolution.Height)
@@ -153,21 +162,28 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 			}
 
 			// 4. GetStreamUri for each profile
-			streamReq := soapEnvelope(username, password, fmt.Sprintf(`
-				<trt:GetStreamUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
-					<trt:StreamSetup>
-						<tt:Stream xmlns:tt="http://www.onvif.org/ver10/schema">RTP-Unicast</tt:Stream>
-						<tt:Transport xmlns:tt="http://www.onvif.org/ver10/schema">
-							<tt:Protocol>RTSP</tt:Protocol>
-						</tt:Transport>
-					</trt:StreamSetup>
-					<trt:ProfileToken>%s</trt:ProfileToken>
-				</trt:GetStreamUri>
-			`, p.Token))
+			streamBody := fmt.Sprintf(
+				`<trt:GetStreamUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:StreamSetup><tt:Stream xmlns:tt="http://www.onvif.org/ver10/schema">RTP-Unicast</tt:Stream><tt:Transport xmlns:tt="http://www.onvif.org/ver10/schema"><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup><trt:ProfileToken>%s</trt:ProfileToken></trt:GetStreamUri>`,
+				p.Token)
 			var streamResp streamURIResp
-			if err := soapCall(mediaURL, streamReq, &streamResp); err == nil {
+			if err := soapCallAuth(mediaURL, cleanEnvelope(streamBody),
+				"http://www.onvif.org/ver10/media/wsdl/GetStreamUri",
+				username, password, &streamResp); err == nil {
 				if uri := streamResp.Body.Resp.MediaURI.URI; uri != "" {
 					result.StreamURIs = append(result.StreamURIs, uri)
+				}
+			}
+
+			// 5. GetSnapshotUri for each profile
+			snapBody := fmt.Sprintf(
+				`<trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>%s</trt:ProfileToken></trt:GetSnapshotUri>`,
+				p.Token)
+			var snapResp snapshotURIResp
+			if err := soapCallAuth(mediaURL, cleanEnvelope(snapBody),
+				"http://www.onvif.org/ver10/media/wsdl/GetSnapshotUri",
+				username, password, &snapResp); err == nil {
+				if uri := snapResp.Body.Resp.MediaURI.URI; uri != "" {
+					result.SnapshotURIs = append(result.SnapshotURIs, uri)
 				}
 			}
 		}
@@ -188,48 +204,107 @@ func TestConnection(ip string, httpPort, rtspPort int) error {
 	return nil
 }
 
-func soapEnvelope(username, password, body string) string {
-	header := ""
-	if username != "" {
-		header = wsseHeader(username, password)
+// cleanEnvelope wraps a SOAP body element in a minimal SOAP 1.2 envelope (no WS-Security).
+func cleanEnvelope(innerBody string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>%s</s:Body></s:Envelope>`, innerBody)
+}
+
+// soapCallAuth sends a SOAP 1.2 request with the required action in Content-Type.
+// On 401 Digest challenge it retries with HTTP Digest auth.
+func soapCallAuth(rawURL, body, action, username, password string, result any) error {
+	ct := `application/soap+xml; charset=utf-8`
+	if action != "" {
+		ct = fmt.Sprintf(`application/soap+xml; charset=utf-8; action="%s"`, action)
 	}
-	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-	<s:Header>%s</s:Header>
-	<s:Body>%s</s:Body>
-</s:Envelope>`, header, body)
-}
-
-func wsseHeader(username, password string) string {
-	nonce := make([]byte, 16)
-	rand.Read(nonce)
-	created := time.Now().UTC().Format(time.RFC3339Nano)
-
-	h := sha1.New()
-	h.Write(nonce)
-	h.Write([]byte(created))
-	h.Write([]byte(password))
-	digest := h.Sum(nil)
-
-	return fmt.Sprintf(`
-		<Security xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
-			<UsernameToken>
-				<Username>%s</Username>
-				<Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">%s</Password>
-				<Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">%s</Nonce>
-				<Created xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">%s</Created>
-			</UsernameToken>
-		</Security>`,
-		username,
-		base64.StdEncoding.EncodeToString(digest),
-		base64.StdEncoding.EncodeToString(nonce),
-		created,
-	)
-}
-
-func soapCall(url, body string, result any) error {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(url, "application/soap+xml; charset=utf-8", strings.NewReader(body))
+	resp, err := client.Post(rawURL, ct, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	// 401 with Digest challenge — retry with HTTP Digest auth
+	if resp.StatusCode == 401 && username != "" {
+		challenge := resp.Header.Get("WWW-Authenticate")
+		if strings.HasPrefix(challenge, "Digest ") {
+			return soapCallDigest(client, rawURL, body, ct, username, password, challenge, result)
+		}
+		return fmt.Errorf("authentication failed (no Digest challenge)")
+	}
+
+	if resp.StatusCode != 200 {
+		if bytes.Contains(data, []byte("NotAuthorized")) {
+			if i := bytes.Index(data, []byte("<env:Text")); i >= 0 {
+				if j := bytes.Index(data[i:], []byte(">")); j >= 0 {
+					if k := bytes.Index(data[i+j:], []byte("</env:Text>")); k >= 0 {
+						return fmt.Errorf("not authorized: %s", string(data[i+j+1:i+j+k]))
+					}
+				}
+			}
+			return fmt.Errorf("not authorized")
+		}
+		return fmt.Errorf("SOAP error (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
+	}
+
+	return xml.Unmarshal(data, result)
+}
+
+func truncate(data []byte, n int) string {
+	if len(data) <= n {
+		return string(data)
+	}
+	return string(data[:n]) + "..."
+}
+
+func soapCallDigest(client *http.Client, rawURL, body, ct, username, password, challenge string, result any) error {
+	params := parseDigestChallenge(challenge)
+	realm := params["realm"]
+	nonce := params["nonce"]
+	qop := params["qop"]
+
+	// Extract URI path from full URL for Digest calculation
+	uri := rawURL
+	if i := strings.Index(rawURL, "://"); i >= 0 {
+		rest := rawURL[i+3:]
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			uri = rest[j:]
+		}
+	}
+
+	// Generate cnonce and compute digest
+	cnonceBytes := make([]byte, 8)
+	rand.Read(cnonceBytes)
+	cnonce := hex.EncodeToString(cnonceBytes)
+	nc := "00000001"
+
+	ha1 := md5hex(username + ":" + realm + ":" + password)
+	ha2 := md5hex("POST:" + uri)
+
+	var response string
+	if strings.Contains(qop, "auth") {
+		response = md5hex(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + ha2)
+	} else {
+		response = md5hex(ha1 + ":" + nonce + ":" + ha2)
+	}
+
+	authHeader := fmt.Sprintf(
+		`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", nc=%s, cnonce="%s", qop=auth`,
+		username, realm, nonce, uri, response, nc, cnonce,
+	)
+
+	req, err := http.NewRequest("POST", rawURL, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("Authorization", authHeader)
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -241,12 +316,29 @@ func soapCall(url, body string, result any) error {
 	}
 
 	if resp.StatusCode != 200 {
-		// Check for common SOAP faults
-		if bytes.Contains(data, []byte("NotAuthorized")) || bytes.Contains(data, []byte("401")) {
-			return fmt.Errorf("authentication failed")
-		}
-		return fmt.Errorf("SOAP error (HTTP %d)", resp.StatusCode)
+		return fmt.Errorf("digest auth failed (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
 	}
 
 	return xml.Unmarshal(data, result)
+}
+
+func parseDigestChallenge(header string) map[string]string {
+	params := map[string]string{}
+	// Strip "Digest " prefix
+	s := strings.TrimPrefix(header, "Digest ")
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if i := strings.IndexByte(part, '='); i > 0 {
+			key := strings.TrimSpace(part[:i])
+			val := strings.TrimSpace(part[i+1:])
+			val = strings.Trim(val, `"`)
+			params[key] = val
+		}
+	}
+	return params
+}
+
+func md5hex(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
 }

@@ -26,6 +26,7 @@ func Migrate(db *sql.DB) error {
 			has_indicator INTEGER NOT NULL DEFAULT 0,
 			resolutions   TEXT    NOT NULL DEFAULT '[]',
 			stream_uris   TEXT    NOT NULL DEFAULT '[]',
+			snapshot_uris TEXT    NOT NULL DEFAULT '[]',
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -53,6 +54,7 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE cameras ADD COLUMN has_indicator INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE cameras ADD COLUMN resolutions TEXT NOT NULL DEFAULT '[]'",
 		"ALTER TABLE cameras ADD COLUMN stream_uris TEXT NOT NULL DEFAULT '[]'",
+		"ALTER TABLE cameras ADD COLUMN snapshot_uris TEXT NOT NULL DEFAULT '[]'",
 	}
 
 	for _, s := range stmts {

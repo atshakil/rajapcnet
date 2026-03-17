@@ -26,6 +26,7 @@ type Camera struct {
 	HasInfrared  bool   `json:"has_infrared"`
 	HasFloodlight bool  `json:"has_floodlight"`
 	HasIndicator bool   `json:"has_indicator"`
-	Resolutions  string `json:"resolutions,omitempty"`  // JSON array stored as text
-	StreamURIs   string `json:"stream_uris,omitempty"`  // JSON array stored as text
+	Resolutions   string `json:"resolutions,omitempty"`  // JSON array stored as text
+	StreamURIs    string `json:"stream_uris,omitempty"`  // JSON array stored as text
+	SnapshotURIs  string `json:"snapshot_uris,omitempty"` // JSON array stored as text
 }

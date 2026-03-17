@@ -32,6 +32,7 @@ func NewServer(db *sql.DB, cfg *config.Config) *http.Server {
 	api.HandleFunc("GET /api/cameras", h.listCameras)
 	api.HandleFunc("POST /api/cameras", h.addCamera)
 	api.HandleFunc("GET /api/cameras/{id}", h.getCamera)
+	api.HandleFunc("GET /api/cameras/{id}/snapshot", h.cameraSnapshot)
 	api.HandleFunc("PUT /api/cameras/{id}", h.updateCamera)
 	api.HandleFunc("DELETE /api/cameras/{id}", h.deleteCamera)
 	api.HandleFunc("GET /api/users", h.adminOnly(h.listUsers))

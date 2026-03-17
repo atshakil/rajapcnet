@@ -87,7 +87,8 @@ func cmdCamerasAdd(c *client.Client) error {
 	fmt.Printf("  RTSP (%d/tcp): %s\n", rtspPort, rtspOk)
 
 	if httpOk == "FAIL" && rtspOk == "FAIL" {
-		return fmt.Errorf("camera unreachable at %s — check IP and network", ip)
+		fmt.Println("  ⚠ Camera unreachable from this machine (may be on a different VLAN)")
+		fmt.Println("  The NVR daemon will attempt to reach it server-side.")
 	}
 
 	fmt.Println()
