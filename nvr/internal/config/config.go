@@ -11,6 +11,7 @@ type Config struct {
 	DatabasePath string
 	StoragePath  string
 	JWTSecret    string
+	Go2RTCAddr   string // e.g. http://localhost:1984; empty disables WebRTC streaming
 }
 
 func Load() *Config {
@@ -21,6 +22,7 @@ func Load() *Config {
 		DatabasePath: getEnv("NVR_DB_PATH", "nvr.db"),
 		StoragePath:  getEnv("NVR_STORAGE_PATH", "/mnt/nvr/recordings"),
 		JWTSecret:    getEnv("NVR_JWT_SECRET", "change-me-in-production"),
+		Go2RTCAddr:   getEnv("NVR_GO2RTC_ADDR", "http://localhost:1984"),
 	}
 }
 

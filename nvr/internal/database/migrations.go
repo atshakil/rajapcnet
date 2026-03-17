@@ -39,6 +39,14 @@ func Migrate(db *sql.DB) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// Per-user, per-camera stream mode preference.
+		// stream_mode: "snapshot" | "primary" | "sub"
+		`CREATE TABLE IF NOT EXISTS user_camera_prefs (
+			user_id     INTEGER NOT NULL,
+			camera_id   INTEGER NOT NULL,
+			stream_mode TEXT    NOT NULL DEFAULT 'snapshot',
+			PRIMARY KEY (user_id, camera_id)
+		)`,
 	}
 
 	// Add columns to cameras if they don't exist (for upgrades)

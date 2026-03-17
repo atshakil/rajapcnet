@@ -126,6 +126,12 @@ func (h *handler) addCamera(w http.ResponseWriter, r *http.Request) {
 
 	c.ID, _ = result.LastInsertId()
 	c.Enabled = true
+
+	// Register RTSP streams in go2rtc so WebRTC streaming is immediately available.
+	if h.go2rtc.Enabled() && len(probe.StreamURIs) > 0 {
+		h.go2rtc.RegisterCameraStreams(c.ID, c.Username, c.Password, probe.StreamURIs)
+	}
+
 	c.Password = ""
 	writeJSON(w, http.StatusCreated, c)
 }
@@ -200,6 +206,11 @@ func (h *handler) deleteCamera(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Remove streams from go2rtc relay.
+	if h.go2rtc.Enabled() {
+		h.go2rtc.UnregisterCameraStreams(id)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -207,4 +218,36 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// setCameraCodec uses ONVIF to switch any H.265 video encoder configurations
+// to H.264 so the camera can be streamed via WebRTC in all browsers.
+func (h *handler) setCameraCodec(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var ip, onvifPath, username, password string
+	var port int
+	err = h.db.QueryRow(
+		`SELECT ip, port, onvif_path, username, password FROM cameras WHERE id = ? AND enabled = 1`, id,
+	).Scan(&ip, &port, &onvifPath, &username, &password)
+	if err != nil {
+		http.Error(w, "camera not found", http.StatusNotFound)
+		return
+	}
+
+	changed, err := onvif.EnsureH264(ip, port, onvifPath, username, password)
+	if err != nil {
+		http.Error(w, "codec switch failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	msg := "Camera is already configured for H.264."
+	if changed {
+		msg = "Camera video encoder switched to H.264. Streams will use H.264 on reconnect."
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": changed, "message": msg})
 }

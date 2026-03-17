@@ -69,3 +69,8 @@ setup-pi:
 	scp .env.host $(PI_HOST):$(PI_PATH)/.env.host
 	scp deploy/nvr.service $(PI_HOST):/tmp/nvr.service
 	ssh $(PI_HOST) 'sudo mv /tmp/nvr.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable $(SERVICE)'
+
+## Install go2rtc on the Pi (run once, or after a go2rtc upgrade)
+setup-go2rtc:
+	rsync deploy/go2rtc.service deploy/setup-go2rtc.sh $(PI_HOST):$(PI_PATH)/
+	ssh $(PI_HOST) 'chmod +x $(PI_PATH)/setup-go2rtc.sh && sudo $(PI_PATH)/setup-go2rtc.sh'

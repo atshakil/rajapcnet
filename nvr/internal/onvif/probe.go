@@ -342,3 +342,174 @@ func md5hex(s string) string {
 	h := md5.Sum([]byte(s))
 	return hex.EncodeToString(h[:])
 }
+
+// ---------------------------------------------------------------------------
+// H.265 → H.264 codec switching
+
+// videoEncCfg holds a ONVIF VideoEncoderConfiguration as parsed from SOAP XML.
+type videoEncCfg struct {
+	Token      string  `xml:"token,attr"`
+	Name       string  `xml:"Name"`
+	UseCount   int     `xml:"UseCount"`
+	Encoding   string  `xml:"Encoding"`
+	Resolution struct {
+		Width  int `xml:"Width"`
+		Height int `xml:"Height"`
+	} `xml:"Resolution"`
+	Quality     float64 `xml:"Quality"`
+	RateControl struct {
+		FrameRateLimit   int `xml:"FrameRateLimit"`
+		EncodingInterval int `xml:"EncodingInterval"`
+		BitrateLimit     int `xml:"BitrateLimit"`
+	} `xml:"RateControl"`
+	H264 *struct {
+		GovLength   int    `xml:"GovLength"`
+		H264Profile string `xml:"H264Profile"`
+	} `xml:"H264"`
+	H265 *struct {
+		GovLength   int    `xml:"GovLength"`
+		H265Profile string `xml:"H265Profile"`
+	} `xml:"H265"`
+	Multicast struct {
+		Address struct {
+			Type        string `xml:"Type"`
+			IPv4Address string `xml:"IPv4Address"`
+		} `xml:"Address"`
+		Port      int  `xml:"Port"`
+		TTL       int  `xml:"TTL"`
+		AutoStart bool `xml:"AutoStart"`
+	} `xml:"Multicast"`
+	SessionTimeout string `xml:"SessionTimeout"`
+}
+
+type vecResp struct {
+	XMLName xml.Name `xml:"Envelope"`
+	Body    struct {
+		Resp struct {
+			Configs []videoEncCfg `xml:"Configurations"`
+		} `xml:"GetVideoEncoderConfigurationsResponse"`
+	} `xml:"Body"`
+}
+
+// EnsureH264 checks all video encoder configurations on the camera via ONVIF.
+// Any configuration currently set to H.265 is switched to H.264 (Main profile).
+// Returns (changed bool, err error).
+func EnsureH264(ip string, port int, onvifPath, username, password string) (bool, error) {
+	baseURL := fmt.Sprintf("http://%s:%d%s", ip, port, onvifPath)
+
+	// Discover media service URL
+	var caps capabilitiesResp
+	soapCallAuth(baseURL,
+		cleanEnvelope(`<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>Media</tds:Category></tds:GetCapabilities>`),
+		"http://www.onvif.org/ver10/device/wsdl/GetCapabilities",
+		username, password, &caps) //nolint:errcheck
+	mediaURL := baseURL
+	if caps.Body.Resp.Capabilities.Media.XAddr != "" {
+		mediaURL = caps.Body.Resp.Capabilities.Media.XAddr
+	}
+
+	// Get all video encoder configurations
+	var cfgs vecResp
+	if err := soapCallAuth(mediaURL,
+		cleanEnvelope(`<trt:GetVideoEncoderConfigurations xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`),
+		"http://www.onvif.org/ver10/media/wsdl/GetVideoEncoderConfigurations",
+		username, password, &cfgs); err != nil {
+		return false, fmt.Errorf("GetVideoEncoderConfigurations: %w", err)
+	}
+
+	isH265 := func(enc string) bool {
+		enc = strings.ToUpper(enc)
+		return enc == "H265" || enc == "H.265" || enc == "HEVC"
+	}
+
+	changed := false
+	for _, c := range cfgs.Body.Resp.Configs {
+		if !isH265(c.Encoding) {
+			continue
+		}
+		body := buildSetVECH264Body(c)
+		var dummy struct{}
+		if err := soapCallAuth(mediaURL, cleanEnvelope(body),
+			"http://www.onvif.org/ver10/media/wsdl/SetVideoEncoderConfiguration",
+			username, password, &dummy); err != nil {
+			return changed, fmt.Errorf("SetVideoEncoderConfiguration token=%s: %w", c.Token, err)
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+// buildSetVECH264Body constructs the ONVIF SetVideoEncoderConfiguration SOAP body
+// that changes encoding to H.264 while preserving all other settings.
+func buildSetVECH264Body(c videoEncCfg) string {
+	govLen := 50
+	if c.H265 != nil && c.H265.GovLength > 0 {
+		govLen = c.H265.GovLength
+	} else if c.H264 != nil && c.H264.GovLength > 0 {
+		govLen = c.H264.GovLength
+	}
+
+	quality := c.Quality
+	if quality <= 0 {
+		quality = 7.5
+	}
+	fps := c.RateControl.FrameRateLimit
+	if fps <= 0 {
+		fps = 25
+	}
+	interval := c.RateControl.EncodingInterval
+	if interval <= 0 {
+		interval = 1
+	}
+	kbps := c.RateControl.BitrateLimit
+	if kbps <= 0 {
+		kbps = 2048
+	}
+	timeout := c.SessionTimeout
+	if timeout == "" {
+		timeout = "PT60S"
+	}
+	ipType := c.Multicast.Address.Type
+	if ipType == "" {
+		ipType = "IPv4"
+	}
+	ipv4 := c.Multicast.Address.IPv4Address
+	if ipv4 == "" {
+		ipv4 = "0.0.0.0"
+	}
+	autoStart := "false"
+	if c.Multicast.AutoStart {
+		autoStart = "true"
+	}
+
+	return fmt.Sprintf(
+		`<trt:SetVideoEncoderConfiguration xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">`+
+			`<trt:Configuration token="%s">`+
+			`<tt:Name>%s</tt:Name>`+
+			`<tt:UseCount>%d</tt:UseCount>`+
+			`<tt:Encoding>H264</tt:Encoding>`+
+			`<tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution>`+
+			`<tt:Quality>%.4f</tt:Quality>`+
+			`<tt:RateControl><tt:FrameRateLimit>%d</tt:FrameRateLimit><tt:EncodingInterval>%d</tt:EncodingInterval><tt:BitrateLimit>%d</tt:BitrateLimit></tt:RateControl>`+
+			`<tt:H264><tt:GovLength>%d</tt:GovLength><tt:H264Profile>Main</tt:H264Profile></tt:H264>`+
+			`<tt:Multicast><tt:Address><tt:Type>%s</tt:Type><tt:IPv4Address>%s</tt:IPv4Address></tt:Address><tt:Port>%d</tt:Port><tt:TTL>%d</tt:TTL><tt:AutoStart>%s</tt:AutoStart></tt:Multicast>`+
+			`<tt:SessionTimeout>%s</tt:SessionTimeout>`+
+			`</trt:Configuration>`+
+			`<trt:ForcePersistence>true</trt:ForcePersistence>`+
+			`</trt:SetVideoEncoderConfiguration>`,
+		xmlEsc(c.Token), xmlEsc(c.Name), c.UseCount,
+		c.Resolution.Width, c.Resolution.Height,
+		quality,
+		fps, interval, kbps,
+		govLen,
+		xmlEsc(ipType), xmlEsc(ipv4), c.Multicast.Port, c.Multicast.TTL, autoStart,
+		xmlEsc(timeout),
+	)
+}
+
+// xmlEsc returns s with XML special characters escaped.
+func xmlEsc(s string) string {
+	var b strings.Builder
+	xml.EscapeText(&b, []byte(s)) //nolint:errcheck
+	return b.String()
+}

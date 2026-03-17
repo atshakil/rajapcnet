@@ -38,16 +38,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .video-grid { display: grid; gap: 4px; height: 100%; }
 .grid-2x2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 .grid-1x1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-.cam-cell { background: #000; border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.cam-cell { background: #000; border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; cursor: pointer; }
 .cam-cell:hover { border-color: var(--accent); }
-.cam-label { position: absolute; top: 6px; left: 8px; font-size: 0.75rem; background: rgba(0,0,0,0.7); padding: 2px 6px; border-radius: 3px; }
-.cam-status { position: absolute; top: 6px; right: 8px; width: 8px; height: 8px; border-radius: 50%; }
+.cam-label { position: absolute; top: 6px; left: 8px; font-size: 0.75rem; background: rgba(0,0,0,0.7); padding: 2px 6px; border-radius: 3px; z-index: 2; pointer-events: none; }
+.cam-status { position: absolute; top: 8px; right: 10px; width: 8px; height: 8px; border-radius: 50%; z-index: 2; pointer-events: none; }
 .cam-status.online { background: #4caf50; }
 .cam-status.offline { background: var(--danger); }
-.cam-placeholder { color: var(--muted); font-size: 0.85rem; }
-.cam-caps { position: absolute; bottom: 6px; left: 8px; display: flex; gap: 4px; }
+.cam-placeholder { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: var(--muted); font-size: 0.85rem; z-index: 1; text-align: center; pointer-events: none; }
+.cam-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: none; z-index: 0; }
+.cam-bottom { position: absolute; bottom: 0; left: 0; right: 0; display: flex; align-items: flex-end; justify-content: space-between; padding: 6px 8px; background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.8)); z-index: 2; }
+.cam-caps { display: flex; gap: 4px; flex-wrap: wrap; }
 .cam-cap { font-size: 0.6rem; background: rgba(74,158,255,0.2); color: var(--accent); padding: 1px 4px; border-radius: 2px; }
-.cam-video { width: 100%; height: 100%; object-fit: cover; display: none; }
+.cam-modes { display: flex; gap: 2px; }
+.mode-btn { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.2); color: rgba(255,255,255,0.65); padding: 1px 6px; border-radius: 3px; font-size: 0.65rem; cursor: pointer; }
+.mode-btn:hover { border-color: rgba(255,255,255,0.5); color: #fff; }
+.mode-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Codec mismatch overlay */
+.codec-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.88); z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; }
+.codec-title { color: #ffa726; font-size: 0.85rem; font-weight: 600; }
+.codec-sub { color: var(--muted); font-size: 0.72rem; line-height: 1.4; max-width: 90%; }
+.codec-fix-btn { background: var(--accent); border: none; color: #fff; padding: 0.4rem 1.1rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; margin-top: 4px; }
+.codec-fix-btn:hover { opacity: 0.88; }
+.codec-fix-btn:disabled { opacity: 0.5; cursor: default; }
+.codec-cancel { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 0.25rem 0.8rem; border-radius: 4px; font-size: 0.72rem; cursor: pointer; }
 
 /* No cameras */
 .no-cameras { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); }
@@ -87,10 +100,13 @@ const API = '';
 let token = localStorage.getItem('nvr_token');
 let user = null;
 let cameras = [];
+let camPrefs = {}; // {cameraId: "snapshot"|"primary"|"sub"}
 let gridMode = '2x2';
 let selectedCam = null;
 
-// Auth
+// ---------------------------------------------------------------------------
+// API helpers
+
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...opts.headers };
   if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -113,7 +129,7 @@ async function login(username, password) {
   token = data.token;
   user = data.user;
   localStorage.setItem('nvr_token', token);
-  showApp();
+  await showApp();
 }
 
 function logout() {
@@ -124,23 +140,42 @@ function logout() {
   document.getElementById('app').style.display = 'none';
 }
 
-// App
-async function showApp() {
-  document.getElementById('login').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-  document.getElementById('userBadge').textContent = user ? user.username + ' (' + user.role + ')' : '';
-  await loadCameras();
-}
+// ---------------------------------------------------------------------------
+// Data loading
 
 async function loadCameras() {
   try {
     const resp = await api('/api/cameras');
     cameras = await resp.json();
-    renderGrid();
   } catch (e) {
     console.error('Failed to load cameras:', e);
   }
 }
+
+async function loadPrefs() {
+  try {
+    const resp = await api('/api/prefs');
+    const data = await resp.json();
+    camPrefs = {};
+    for (const [k, v] of Object.entries(data.cameras || {})) {
+      camPrefs[parseInt(k)] = v;
+    }
+  } catch (e) {}
+}
+
+// ---------------------------------------------------------------------------
+// App shell
+
+async function showApp() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('userBadge').textContent = user ? user.username + ' (' + user.role + ')' : '';
+  await Promise.all([loadCameras(), loadPrefs()]);
+  renderGrid();
+}
+
+// ---------------------------------------------------------------------------
+// Grid
 
 function renderGrid() {
   const grid = document.getElementById('videoGrid');
@@ -159,66 +194,63 @@ function renderGrid() {
     grid.appendChild(createCamCell(cam));
   } else {
     grid.className = 'video-grid grid-2x2';
-    const show = cameras.slice(0, 4);
-    show.forEach(cam => grid.appendChild(createCamCell(cam)));
+    cameras.slice(0, 4).forEach(cam => grid.appendChild(createCamCell(cam)));
   }
 }
+
+// ---------------------------------------------------------------------------
+// Camera cell
 
 function createCamCell(cam) {
   const cell = document.createElement('div');
   cell.className = 'cam-cell';
   cell.onclick = () => {
-    if (gridMode === '2x2') {
-      selectedCam = cam.id;
-      setGrid('1x1');
-    } else {
-      setGrid('2x2');
-    }
+    if (gridMode === '2x2') { selectedCam = cam.id; setGrid('1x1'); }
+    else { setGrid('2x2'); }
   };
 
+  // Parse available streams
+  let streamURIs = [];
+  try { streamURIs = JSON.parse(cam.stream_uris || '[]'); } catch (e) {}
+
+  // Determine initial mode
+  let mode = camPrefs[cam.id] || 'snapshot';
+  // Fall back to snapshot if preferred mode requires unavailable streams
+  if (mode === 'primary' && streamURIs.length < 1) mode = 'snapshot';
+  if (mode === 'sub' && streamURIs.length < 2) mode = 'snapshot';
+
+  // -- Label / status overlays --
   const label = document.createElement('span');
   label.className = 'cam-label';
   label.textContent = cam.name;
   cell.appendChild(label);
 
-  const status = document.createElement('span');
-  status.className = 'cam-status ' + (cam.enabled ? 'online' : 'offline');
-  cell.appendChild(status);
+  const statusDot = document.createElement('span');
+  statusDot.className = 'cam-status ' + (cam.enabled ? 'online' : 'offline');
+  cell.appendChild(statusDot);
 
+  // -- Placeholder (visible when no stream is playing) --
   const ph = document.createElement('span');
   ph.className = 'cam-placeholder';
-  const info = [cam.manufacturer, cam.model].filter(Boolean).join(' ');
-  ph.textContent = info || cam.ip;
+  ph.textContent = [cam.manufacturer, cam.model].filter(Boolean).join(' ') || cam.ip;
   cell.appendChild(ph);
 
+  // -- Media elements --
   const img = document.createElement('img');
   img.className = 'cam-video';
   cell.appendChild(img);
 
-  let snapTimer = null;
-  async function refreshSnap() {
-    try {
-      const resp = await fetch(`/api/cameras/${cam.id}/snapshot`, {
-        headers: { 'Authorization': 'Bearer ' + token }
-      });
-      if (!resp.ok) return;
-      const blob = await resp.blob();
-      const newSrc = URL.createObjectURL(blob);
-      const old = img.src;
-      img.src = newSrc;
-      img.style.display = 'block';
-      ph.style.display = 'none';
-      if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
-    } catch (e) {}
-  }
-  refreshSnap();
-  snapTimer = setInterval(refreshSnap, 2000);
-  cell._cleanup = () => {
-    clearInterval(snapTimer);
-    if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-  };
+  const video = document.createElement('video');
+  video.className = 'cam-video';
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  cell.appendChild(video);
 
-  // Capability badges
+  // -- Bottom bar: caps + mode selector --
+  const bottom = document.createElement('div');
+  bottom.className = 'cam-bottom';
+
   const caps = document.createElement('div');
   caps.className = 'cam-caps';
   if (cam.has_onvif) addCap(caps, 'ONVIF');
@@ -226,7 +258,205 @@ function createCamCell(cam) {
   if (cam.has_motion) addCap(caps, 'Motion');
   if (cam.has_infrared) addCap(caps, 'IR');
   if (cam.has_floodlight) addCap(caps, 'Light');
-  cell.appendChild(caps);
+  bottom.appendChild(caps);
+
+  const availModes = [
+    { key: 'snapshot', label: 'Snap' },
+    ...(streamURIs.length >= 1 ? [{ key: 'primary', label: 'Primary' }] : []),
+    ...(streamURIs.length >= 2 ? [{ key: 'sub', label: 'Sub' }] : []),
+  ];
+
+  const modeBar = document.createElement('div');
+  modeBar.className = 'cam-modes';
+  const modeBtns = {};
+  availModes.forEach(m => {
+    const btn = document.createElement('button');
+    btn.className = 'mode-btn' + (m.key === mode ? ' active' : '');
+    btn.textContent = m.label;
+    btn.onclick = async e => {
+      e.stopPropagation();
+      if (m.key === mode) return;
+      mode = m.key;
+      camPrefs[cam.id] = m.key;
+      Object.values(modeBtns).forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      try { await api(`/api/cameras/${cam.id}/pref`, { method: 'PUT', body: JSON.stringify({ stream_mode: m.key }) }); } catch (_) {}
+      applyMode();
+    };
+    modeBtns[m.key] = btn;
+    modeBar.appendChild(btn);
+  });
+  bottom.appendChild(modeBar);
+  cell.appendChild(bottom);
+
+  // -- Media management --
+  let snapTimer = null;
+  let pc = null;
+
+  function showMedia(el) {
+    [img, video].forEach(e => { e.style.display = 'none'; });
+    el.style.display = 'block';
+    ph.style.display = 'none';
+  }
+
+  function stopAll() {
+    if (snapTimer) { clearInterval(snapTimer); snapTimer = null; }
+    if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+    img.src = '';
+    img.style.display = 'none';
+    if (pc) { pc.close(); pc = null; }
+    video.srcObject = null;
+    video.style.display = 'none';
+    ph.style.display = '';
+    const overlay = cell.querySelector('.codec-overlay');
+    if (overlay) overlay.remove();
+  }
+
+  async function startSnapshot() {
+    async function refresh() {
+      try {
+        const resp = await fetch(`/api/cameras/${cam.id}/snapshot`, {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!resp.ok) return;
+        const blob = await resp.blob();
+        const newSrc = URL.createObjectURL(blob);
+        const old = img.src;
+        img.src = newSrc;
+        showMedia(img);
+        if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      } catch (_) {}
+    }
+    await refresh();
+    snapTimer = setInterval(refresh, 2000);
+  }
+
+  async function startWebRTC(streamKey) {
+    try {
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.ontrack = evt => {
+        if (evt.track.kind === 'video') {
+          video.srcObject = evt.streams[0];
+          showMedia(video);
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait for ICE gathering to finish (or timeout after 3 s)
+      await new Promise(resolve => {
+        if (pc.iceGatheringState === 'complete') { resolve(); return; }
+        const done = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', done); resolve(); } };
+        pc.addEventListener('icegatheringstatechange', done);
+        setTimeout(resolve, 3000);
+      });
+
+      const resp = await fetch(`/api/cameras/${cam.id}/webrtc?stream=${streamKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp', 'Authorization': 'Bearer ' + token },
+        body: pc.localDescription.sdp
+      });
+
+      // Codec mismatch: show Fix overlay instead of silently reverting to Snap
+      if (resp.status === 409) {
+        if (pc) { pc.close(); pc = null; }
+        const data = await resp.json().catch(() => ({}));
+        if (data.error === 'codec_mismatch') {
+          showCodecOverlay(data.camera_codec || 'H265', streamKey);
+          return;
+        }
+      }
+
+      if (!resp.ok) throw new Error('signaling ' + resp.status);
+      const answerSdp = await resp.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    } catch (err) {
+      console.warn('WebRTC failed for cam', cam.id, ':', err.message, '— falling back to snapshot');
+      if (pc) { pc.close(); pc = null; }
+      // Revert mode button to Snap
+      mode = 'snapshot';
+      camPrefs[cam.id] = 'snapshot';
+      Object.values(modeBtns).forEach(b => b.classList.remove('active'));
+      if (modeBtns['snapshot']) modeBtns['snapshot'].classList.add('active');
+      startSnapshot();
+    }
+  }
+
+  function showCodecOverlay(codec, streamKey) {
+    // Remove any existing overlay first
+    const existing = cell.querySelector('.codec-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'codec-overlay';
+
+    const title = document.createElement('div');
+    title.className = 'codec-title';
+    title.textContent = `⚠ Camera uses ${codec}`;
+    overlay.appendChild(title);
+
+    const sub = document.createElement('div');
+    sub.className = 'codec-sub';
+    sub.textContent = 'Most browsers only support H.264 for WebRTC. Click below to switch the camera encoder to H.264 via ONVIF (no transcoding, one-time change).';
+    overlay.appendChild(sub);
+
+    const fixBtn = document.createElement('button');
+    fixBtn.className = 'codec-fix-btn';
+    fixBtn.textContent = 'Fix: Switch Camera to H.264';
+    overlay.appendChild(fixBtn);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'codec-cancel';
+    cancelBtn.textContent = 'Keep Snapshot';
+    overlay.appendChild(cancelBtn);
+
+    fixBtn.onclick = async e => {
+      e.stopPropagation();
+      fixBtn.disabled = true;
+      fixBtn.textContent = 'Switching to H.264\u2026';
+      try {
+        const r = await fetch(`/api/cameras/${cam.id}/set-h264`, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.message || r.status);
+        overlay.remove();
+        fixBtn.textContent = 'Done! Reconnecting\u2026';
+        // Allow camera encoder to settle, then retry WebRTC
+        await new Promise(res => setTimeout(res, 2000));
+        await startWebRTC(streamKey);
+      } catch (err) {
+        fixBtn.disabled = false;
+        fixBtn.textContent = 'Failed: ' + err.message;
+      }
+    };
+
+    cancelBtn.onclick = e => {
+      e.stopPropagation();
+      overlay.remove();
+      mode = 'snapshot';
+      camPrefs[cam.id] = 'snapshot';
+      Object.values(modeBtns).forEach(b => b.classList.remove('active'));
+      if (modeBtns['snapshot']) modeBtns['snapshot'].classList.add('active');
+      startSnapshot();
+    };
+
+    cell.appendChild(overlay);
+  }
+
+  function applyMode() {
+    stopAll();
+    if (mode === 'snapshot') startSnapshot();
+    else if (mode === 'primary') startWebRTC('primary');
+    else if (mode === 'sub') startWebRTC('sub');
+  }
+
+  cell._cleanup = stopAll;
+  applyMode();
 
   return cell;
 }
@@ -245,8 +475,10 @@ function setGrid(mode) {
   renderGrid();
 }
 
+// ---------------------------------------------------------------------------
 // Init
-document.getElementById('loginForm').onsubmit = async (e) => {
+
+document.getElementById('loginForm').onsubmit = async e => {
   e.preventDefault();
   const errEl = document.getElementById('loginError');
   errEl.style.display = 'none';
@@ -259,23 +491,25 @@ document.getElementById('loginForm').onsubmit = async (e) => {
 };
 
 document.getElementById('btnGrid').onclick = () => setGrid('2x2');
-document.getElementById('btnFull').onclick = () => { if (cameras.length > 0) { selectedCam = selectedCam || cameras[0].id; setGrid('1x1'); }};
+document.getElementById('btnFull').onclick = () => {
+  if (cameras.length > 0) { selectedCam = selectedCam || cameras[0].id; setGrid('1x1'); }
+};
 document.getElementById('btnLogout').onclick = logout;
 
-// Check existing token
+// Re-validate existing token and restore session without showing login flash
 (async () => {
-  if (token) {
-    try {
-      const resp = await api('/api/cameras');
-      if (resp.ok) {
-        cameras = await resp.json();
-        user = { username: '...', role: '...' }; // Will be refreshed
-        showApp();
-        return;
-      }
-    } catch (e) {}
-    logout();
-  }
+  if (!token) return;
+  try {
+    const [camResp] = await Promise.all([api('/api/cameras'), loadPrefs()]);
+    if (camResp.ok) {
+      cameras = await camResp.json();
+      document.getElementById('login').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      renderGrid();
+      return;
+    }
+  } catch (_) {}
+  logout();
 })();
 </script>
 </body>
