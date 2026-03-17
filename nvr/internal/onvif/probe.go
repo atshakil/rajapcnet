@@ -22,9 +22,9 @@ type ProbeResult struct {
 	HasPTZ       bool
 	HasMotion    bool
 	HasInfrared  bool
-	Resolutions   []string
-	StreamURIs    []string
-	SnapshotURIs  []string
+	Resolutions  []string
+	StreamURIs   []string
+	SnapshotURIs []string
 }
 
 type deviceInfoResp struct {
@@ -346,12 +346,64 @@ func md5hex(s string) string {
 // ---------------------------------------------------------------------------
 // H.265 → H.264 codec switching
 
+// getServicesResp is used to discover Media2 service URL via GetServices.
+type getServicesResp struct {
+	XMLName xml.Name `xml:"Envelope"`
+	Body    struct {
+		Resp struct {
+			Services []struct {
+				Namespace string `xml:"Namespace"`
+				XAddr     string `xml:"XAddr"`
+			} `xml:"Service"`
+		} `xml:"GetServicesResponse"`
+	} `xml:"Body"`
+}
+
+// vec2Cfg holds a ONVIF Media2 VideoEncoder2Configuration.
+// Note: Hikvision Media2 returns FrameRateLimit as a float (e.g. "15.000000")
+// and ConstantBitRate as an XML attribute (not a child element).
+type vec2Cfg struct {
+	Token      string `xml:"token,attr"`
+	Name       string `xml:"Name"`
+	UseCount   int    `xml:"UseCount"`
+	Encoding   string `xml:"Encoding"`
+	Resolution struct {
+		Width  int `xml:"Width"`
+		Height int `xml:"Height"`
+	} `xml:"Resolution"`
+	Quality     float64 `xml:"Quality"`
+	RateControl struct {
+		ConstantBitRate bool    `xml:"ConstantBitRate,attr"` // attribute in Hikvision response
+		FrameRateLimit  float64 `xml:"FrameRateLimit"`       // float in Hikvision Media2
+		BitrateLimit    int     `xml:"BitrateLimit"`
+	} `xml:"RateControl"`
+	Multicast struct {
+		Address struct {
+			Type        string `xml:"Type"`
+			IPv4Address string `xml:"IPv4Address"`
+		} `xml:"Address"`
+		Port      int  `xml:"Port"`
+		TTL       int  `xml:"TTL"`
+		AutoStart bool `xml:"AutoStart"`
+	} `xml:"Multicast"`
+	SessionTimeout string `xml:"SessionTimeout"`
+}
+
+type vec2Resp struct {
+	XMLName xml.Name `xml:"Envelope"`
+	Body    struct {
+		Resp struct {
+			Configs []vec2Cfg `xml:"Configurations"`
+		} `xml:"GetVideoEncoderConfigurationsResponse"`
+	} `xml:"Body"`
+}
+
 // videoEncCfg holds a ONVIF VideoEncoderConfiguration as parsed from SOAP XML.
 type videoEncCfg struct {
-	Token      string  `xml:"token,attr"`
-	Name       string  `xml:"Name"`
-	UseCount   int     `xml:"UseCount"`
-	Encoding   string  `xml:"Encoding"`
+	Token      string `xml:"token,attr"`
+	Name       string `xml:"Name"`
+	UseCount   int    `xml:"UseCount"`
+	Encoding   string `xml:"Encoding"`
 	Resolution struct {
 		Width  int `xml:"Width"`
 		Height int `xml:"Height"`
@@ -393,11 +445,13 @@ type vecResp struct {
 
 // EnsureH264 checks all video encoder configurations on the camera via ONVIF.
 // Any configuration currently set to H.265 is switched to H.264 (Main profile).
+// It checks both ONVIF Media 1.x and Media 2.0 (Hikvision exposes H.265 only
+// via Media 2.0 while Media 1.x always reports H.264).
 // Returns (changed bool, err error).
 func EnsureH264(ip string, port int, onvifPath, username, password string) (bool, error) {
 	baseURL := fmt.Sprintf("http://%s:%d%s", ip, port, onvifPath)
 
-	// Discover media service URL
+	// Discover media service URLs (Media1 from GetCapabilities, Media2 from GetServices)
 	var caps capabilitiesResp
 	soapCallAuth(baseURL,
 		cleanEnvelope(`<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>Media</tds:Category></tds:GetCapabilities>`),
@@ -408,7 +462,35 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 		mediaURL = caps.Body.Resp.Capabilities.Media.XAddr
 	}
 
-	// Get all video encoder configurations
+	// Discover Media2 URL via GetServices
+	media2URL := ""
+	var svcs getServicesResp
+	if err := soapCallAuth(baseURL,
+		cleanEnvelope(`<tds:GetServices xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>`),
+		"http://www.onvif.org/ver10/device/wsdl/GetServices",
+		username, password, &svcs); err == nil {
+		for _, svc := range svcs.Body.Resp.Services {
+			if strings.Contains(svc.Namespace, "ver20/media") {
+				media2URL = svc.XAddr
+				break
+			}
+		}
+	}
+	// Fallback: try common Media2 path if GetServices didn't help
+	if media2URL == "" {
+		// Derive from Media1 URL or base
+		base := fmt.Sprintf("http://%s:%d", ip, port)
+		media2URL = base + "/onvif/Media2"
+	}
+
+	isH265 := func(enc string) bool {
+		enc = strings.ToUpper(strings.TrimSpace(enc))
+		return enc == "H265" || enc == "H.265" || enc == "HEVC"
+	}
+
+	changed := false
+
+	// --- Media 1.x pass ---
 	var cfgs vecResp
 	if err := soapCallAuth(mediaURL,
 		cleanEnvelope(`<trt:GetVideoEncoderConfigurations xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`),
@@ -416,13 +498,6 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 		username, password, &cfgs); err != nil {
 		return false, fmt.Errorf("GetVideoEncoderConfigurations: %w", err)
 	}
-
-	isH265 := func(enc string) bool {
-		enc = strings.ToUpper(enc)
-		return enc == "H265" || enc == "H.265" || enc == "HEVC"
-	}
-
-	changed := false
 	for _, c := range cfgs.Body.Resp.Configs {
 		if !isH265(c.Encoding) {
 			continue
@@ -436,6 +511,28 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 		}
 		changed = true
 	}
+
+	// --- Media 2.0 pass (Hikvision reports H265 here, not in Media1) ---
+	var cfgs2 vec2Resp
+	if err := soapCallAuth(media2URL,
+		cleanEnvelope(`<tr2:GetVideoEncoderConfigurations xmlns:tr2="http://www.onvif.org/ver20/media/wsdl"/>`),
+		"http://www.onvif.org/ver20/media/wsdl/GetVideoEncoderConfigurations",
+		username, password, &cfgs2); err == nil {
+		for _, c := range cfgs2.Body.Resp.Configs {
+			if !isH265(c.Encoding) {
+				continue
+			}
+			body := buildSetVEC2H264Body(c)
+			var dummy struct{}
+			if err2 := soapCallAuth(media2URL, cleanEnvelope(body),
+				"http://www.onvif.org/ver20/media/wsdl/SetVideoEncoderConfiguration",
+				username, password, &dummy); err2 != nil {
+				return changed, fmt.Errorf("Media2 SetVideoEncoderConfiguration token=%s: %w", c.Token, err2)
+			}
+			changed = true
+		}
+	}
+
 	return changed, nil
 }
 
@@ -512,4 +609,62 @@ func xmlEsc(s string) string {
 	var b strings.Builder
 	xml.EscapeText(&b, []byte(s)) //nolint:errcheck
 	return b.String()
+}
+
+// buildSetVEC2H264Body constructs an ONVIF Media 2.0 SetVideoEncoderConfiguration
+// SOAP body that switches a vec2Cfg (H.265) to H.264.
+// Note: Hikvision Media2 uses attributes for GovLength/Profile/ConstantBitRate
+// and does not have H264/H265 child elements.
+func buildSetVEC2H264Body(c vec2Cfg) string {
+	quality := c.Quality
+	if quality <= 0 {
+		quality = 7.5
+	}
+	fps := c.RateControl.FrameRateLimit
+	if fps <= 0 {
+		fps = 25
+	}
+	kbps := c.RateControl.BitrateLimit
+	if kbps <= 0 {
+		kbps = 2048
+	}
+	timeout := c.SessionTimeout
+	if timeout == "" {
+		timeout = "PT0S"
+	}
+	ipType := c.Multicast.Address.Type
+	if ipType == "" {
+		ipType = "IPv4"
+	}
+	ipv4 := c.Multicast.Address.IPv4Address
+	if ipv4 == "" {
+		ipv4 = "0.0.0.0"
+	}
+	autoStart := "false"
+	if c.Multicast.AutoStart {
+		autoStart = "true"
+	}
+	cbr := "false"
+	if c.RateControl.ConstantBitRate {
+		cbr = "true"
+	}
+
+	return fmt.Sprintf(
+		`<tr2:SetVideoEncoderConfiguration xmlns:tr2="http://www.onvif.org/ver20/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">`+
+			`<tr2:Configuration token="%s">`+
+			`<tt:Name>%s</tt:Name>`+
+			`<tt:UseCount>%d</tt:UseCount>`+
+			`<tt:Encoding>H264</tt:Encoding>`+
+			`<tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution>`+
+			`<tt:RateControl ConstantBitRate="%s"><tt:FrameRateLimit>%g</tt:FrameRateLimit><tt:BitrateLimit>%d</tt:BitrateLimit></tt:RateControl>`+
+			`<tt:Multicast><tt:Address><tt:Type>%s</tt:Type><tt:IPv4Address>%s</tt:IPv4Address></tt:Address><tt:Port>%d</tt:Port><tt:TTL>%d</tt:TTL><tt:AutoStart>%s</tt:AutoStart></tt:Multicast>`+
+			`<tt:Quality>%.6f</tt:Quality>`+
+			`</tr2:Configuration>`+
+			`</tr2:SetVideoEncoderConfiguration>`,
+		xmlEsc(c.Token), xmlEsc(c.Name), c.UseCount,
+		c.Resolution.Width, c.Resolution.Height,
+		cbr, fps, kbps,
+		xmlEsc(ipType), xmlEsc(ipv4), c.Multicast.Port, c.Multicast.TTL, autoStart,
+		quality,
+	)
 }
