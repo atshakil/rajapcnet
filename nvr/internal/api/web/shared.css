@@ -5,6 +5,7 @@
   --success: #4caf50; --warn: #ffa726;
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+body.fill { display: flex; flex-direction: column; height: 100vh; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
