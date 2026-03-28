@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVR — Cameras</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+.cam-content { flex: 1; padding: 0.75rem 1rem; overflow: auto; }
+.cam-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 0.75rem; }
+.cam-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+.cam-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+.cam-card-header h3 { font-size: 0.95rem; font-weight: 600; }
+.cam-card-info { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.75rem; line-height: 1.5; }
+.cam-card-info span { display: block; }
+.motion-section { border-top: 1px solid var(--border); padding-top: 0.75rem; }
+.motion-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+.motion-row label { font-size: 0.82rem; }
+.retention-input { width: 60px; padding: 0.3rem 0.4rem; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 0.82rem; text-align: center; }
+.motion-save { background: var(--accent); border: none; color: #fff; padding: 0.3rem 0.7rem; border-radius: 4px; font-size: 0.78rem; cursor: pointer; }
+.motion-save:hover { opacity: 0.9; }
+.motion-save:disabled { opacity: 0.5; cursor: default; }
+.runtime-state { font-size: 0.75rem; margin-top: 0.4rem; }
+.cam-card-msg { font-size: 0.75rem; margin-top: 0.3rem; min-height: 1em; }
+.cam-card-msg.ok { color: #4caf50; }
+.cam-card-msg.err { color: var(--danger); }
+@media(max-width:600px) {
+  .cam-cards { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body style="display:none">
+<div class="topbar">
+  <h1><a href="/monitor.html" style="color:inherit;text-decoration:none">NVR</a></h1>
+  <nav id="topnav"></nav>
+  <div class="topbar-actions">
+    <span class="user-badge" id="userBadge"></span>
+    <button class="btn-logout" onclick="logout()">Logout</button>
+  </div>
+</div>
+<div class="cam-content">
+  <div id="camCards" class="cam-cards"></div>
+</div>
+
+<script src="/shared.js"></script>
+<script>
+async function init() {
+  var resp = await api('/api/cameras');
+  var cameras = await resp.json();
+
+  var statusResp = await api('/api/motion-log/status');
+  var statusList = await statusResp.json();
+  var statusMap = {};
+  statusList.forEach(function(s) { statusMap[s.camera_id] = s; });
+
+  var container = document.getElementById('camCards');
+  cameras.forEach(function(cam) {
+    container.appendChild(createCard(cam, statusMap[cam.id] || {}));
+  });
+}
+
+function createCard(cam, motionStatus) {
+  var card = document.createElement('div');
+  card.className = 'cam-card';
+
+  var enabled = motionStatus.enabled || false;
+  var retention = motionStatus.retention_days || 7;
+  var runtime = motionStatus.runtime_state || 'stopped';
+
+  card.innerHTML =
+    '<div class="cam-card-header">' +
+      '<h3>' + escHtml(cam.name) + '</h3>' +
+      '<span class="badge badge-' + (cam.enabled ? 'on' : 'off') + '">' + (cam.enabled ? 'Online' : 'Offline') + '</span>' +
+    '</div>' +
+    '<div class="cam-card-info">' +
+      '<span>IP: ' + escHtml(cam.ip) + (cam.onvif_port ? ':' + cam.onvif_port : '') + '</span>' +
+      (cam.manufacturer ? '<span>' + escHtml(cam.manufacturer) + ' ' + escHtml(cam.model || '') + '</span>' : '') +
+      '<span>Capabilities: ' + capsList(cam) + '</span>' +
+    '</div>' +
+    '<div class="motion-section">' +
+      '<div class="motion-row">' +
+        '<label>Motion Logging</label>' +
+        '<label class="toggle">' +
+          '<input type="checkbox" class="motion-enable" ' + (enabled ? 'checked' : '') + '>' +
+          '<span class="toggle-slider"></span>' +
+        '</label>' +
+      '</div>' +
+      '<div class="motion-row">' +
+        '<label>Retention (days)</label>' +
+        '<input type="number" class="retention-input" min="1" max="365" value="' + retention + '">' +
+      '</div>' +
+      '<div class="motion-row">' +
+        '<span></span>' +
+        '<button class="motion-save">Save</button>' +
+      '</div>' +
+      '<div class="runtime-state">Runtime: <span class="badge badge-' + runtimeBadge(runtime) + '">' + escHtml(runtime) + '</span></div>' +
+      '<div class="cam-card-msg"></div>' +
+    '</div>';
+
+  var saveBtn = card.querySelector('.motion-save');
+  saveBtn.onclick = async function() {
+    saveBtn.disabled = true;
+    var msg = card.querySelector('.cam-card-msg');
+    msg.textContent = ''; msg.className = 'cam-card-msg';
+    var en = card.querySelector('.motion-enable').checked;
+    var ret = parseInt(card.querySelector('.retention-input').value) || 7;
+    try {
+      var resp = await api('/api/cameras/' + cam.id + '/motion-log', {
+        method: 'PUT',
+        body: JSON.stringify({ enabled: en, retention_days: ret })
+      });
+      if (!resp.ok) throw new Error((await resp.text()).trim() || 'Failed');
+      var data = await resp.json();
+      msg.textContent = 'Saved'; msg.className = 'cam-card-msg ok';
+      var badge = card.querySelector('.runtime-state .badge');
+      if (badge) {
+        var st = data.runtime_state || (en ? 'starting' : 'stopped');
+        badge.textContent = st;
+        badge.className = 'badge badge-' + runtimeBadge(st);
+      }
+    } catch(e) {
+      msg.textContent = e.message; msg.className = 'cam-card-msg err';
+    }
+    saveBtn.disabled = false;
+  };
+
+  return card;
+}
+
+function capsList(cam) {
+  var caps = [];
+  if (cam.has_onvif) caps.push('ONVIF');
+  if (cam.has_ptz) caps.push('PTZ');
+  if (cam.has_motion) caps.push('Motion');
+  if (cam.has_infrared) caps.push('IR');
+  if (cam.has_floodlight) caps.push('Light');
+  return caps.length ? caps.join(', ') : 'None';
+}
+
+function runtimeBadge(state) {
+  if (state === 'active') return 'on';
+  if (state === 'stopped' || state === 'unsupported') return 'off';
+  if (state === 'disconnected' || state === 'misconfigured') return 'err';
+  return 'warn';
+}
+
+(async function() {
+  try {
+    renderNav('cameras');
+    document.body.style.display = '';
+    await init();
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>

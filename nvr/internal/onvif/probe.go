@@ -211,16 +211,21 @@ func cleanEnvelope(innerBody string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>%s</s:Body></s:Envelope>`, innerBody)
 }
 
-// soapCallAuth sends a SOAP 1.2 request with the required action in Content-Type.
+// soapCallAuth sends a SOAP 1.2 request with a default 10 s timeout.
+func soapCallAuth(rawURL, innerBody, action, username, password string, result any) error {
+	return soapCallAuthTimeout(rawURL, innerBody, action, username, password, 10*time.Second, result)
+}
+
+// soapCallAuthTimeout sends a SOAP 1.2 request with the required action in Content-Type.
 // innerBody is the SOAP body content (without the Envelope wrapper).
 // Auth strategy: SOAP 1.2 plain → SOAP 1.2 HTTP Digest → SOAP 1.2 WS-UsernameToken
 // → SOAP 1.1 WS-UsernameToken (covers Hikvision via Digest, Reolink via WS-Security+SOAP1.1).
-func soapCallAuth(rawURL, innerBody, action, username, password string, result any) error {
+func soapCallAuthTimeout(rawURL, innerBody, action, username, password string, timeout time.Duration, result any) error {
 	ct12 := `application/soap+xml; charset=utf-8`
 	if action != "" {
 		ct12 = fmt.Sprintf(`application/soap+xml; charset=utf-8; action="%s"`, action)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: timeout}
 	envelope := cleanEnvelope(innerBody)
 	resp, err := client.Post(rawURL, ct12, strings.NewReader(envelope))
 	if err != nil {

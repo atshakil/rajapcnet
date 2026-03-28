@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -9,6 +10,7 @@ import (
 	"nvr/internal/api"
 	"nvr/internal/config"
 	"nvr/internal/database"
+	"nvr/internal/motion"
 )
 
 func main() {
@@ -24,7 +26,13 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	srv := api.NewServer(db, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	motionMgr := motion.NewManager(db)
+	go motionMgr.Start(ctx)
+
+	srv := api.NewServer(db, cfg, motionMgr)
 
 	go func() {
 		log.Printf("nvr listening on %s", cfg.ListenAddr)
@@ -36,5 +44,6 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
+	cancel()
 	log.Println("shutting down")
 }

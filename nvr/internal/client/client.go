@@ -188,6 +188,73 @@ func (c *Client) DeleteUser(id string) error {
 	return nil
 }
 
+// ── Motion Log ──
+
+func (c *Client) GetMotionSettings(cameraID string) (*model.MotionSettings, error) {
+	resp, err := c.get("/api/cameras/" + cameraID + "/motion-log")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var ms model.MotionSettings
+	if err := json.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		return nil, err
+	}
+	return &ms, nil
+}
+
+func (c *Client) UpdateMotionSettings(cameraID string, body map[string]any) (*model.MotionSettings, error) {
+	resp, err := c.putJSON("/api/cameras/"+cameraID+"/motion-log", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var ms model.MotionSettings
+	if err := json.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		return nil, err
+	}
+	return &ms, nil
+}
+
+func (c *Client) ListMotionEvents(cameraID, query string) (*model.EpisodePage, error) {
+	path := "/api/motion-log/events"
+	if cameraID != "" {
+		path = "/api/cameras/" + cameraID + "/motion-log/events"
+	}
+	if query != "" {
+		path += "?" + query
+	}
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var page model.EpisodePage
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+func (c *Client) MotionLogStatus() ([]model.MotionSettings, error) {
+	resp, err := c.get("/api/motion-log/status")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var result []model.MotionSettings
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// StreamMotionLog opens a long-lived SSE connection. Returns the response for
+// the caller to read incrementally. Caller must close resp.Body.
+func (c *Client) StreamMotionLog(path string) (*http.Response, error) {
+	return c.do("GET", path, nil)
+}
+
 func (c *Client) get(path string) (*http.Response, error) {
 	return c.do("GET", path, nil)
 }

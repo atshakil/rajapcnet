@@ -62,8 +62,18 @@ func main() {
 			err = cmdCamerasStatus(c)
 		case "diagnose":
 			err = cmdCamerasDiagnose(c)
+		case "motion-log":
+			err = cmdMotionLog(c)
 		default:
 			camerasUsage()
+		}
+	case "motion-log":
+		// Global shortcut: nvrctl motion-log stream
+		if len(os.Args) >= 3 && os.Args[2] == "stream" {
+			err = cmdMotionStream(c)
+		} else {
+			fmt.Fprintf(os.Stderr, "Use: nvrctl cameras motion-log <action>\n     nvrctl motion-log stream\n")
+			os.Exit(1)
 		}
 	case "users":
 		if len(os.Args) < 3 {
@@ -102,6 +112,7 @@ Commands:
   logout             Remove cached token
   bootstrap <u> <p>  Create first admin user (one-time)
   cameras <action>   Manage cameras
+  motion-log stream  Stream global live motion events
   users <action>     Manage users (admin)
 
 Environment:

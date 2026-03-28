@@ -9,6 +9,7 @@ import (
 
 	"nvr/internal/config"
 	"nvr/internal/go2rtc"
+	"nvr/internal/motion"
 )
 
 type handler struct {
@@ -16,14 +17,16 @@ type handler struct {
 	cfg       *config.Config
 	jwtSecret []byte
 	go2rtc    *go2rtc.Client
+	motion    *motion.Manager
 }
 
-func NewServer(db *sql.DB, cfg *config.Config) *http.Server {
+func NewServer(db *sql.DB, cfg *config.Config, motionMgr *motion.Manager) *http.Server {
 	h := &handler{
 		db:        db,
 		cfg:       cfg,
 		jwtSecret: []byte(cfg.JWTSecret),
 		go2rtc:    go2rtc.NewClient(cfg.Go2RTCAddr),
+		motion:    motionMgr,
 	}
 
 	// Pre-populate go2rtc with existing camera streams in the background.
@@ -56,6 +59,15 @@ func NewServer(db *sql.DB, cfg *config.Config) *http.Server {
 	api.HandleFunc("GET /api/users/{id}", h.adminOnly(h.getUser))
 	api.HandleFunc("PUT /api/users/{id}", h.adminOnly(h.updateUser))
 	api.HandleFunc("DELETE /api/users/{id}", h.adminOnly(h.deleteUser))
+
+	// Motion logging
+	api.HandleFunc("GET /api/cameras/{id}/motion-log", h.getMotionSettings)
+	api.HandleFunc("PUT /api/cameras/{id}/motion-log", h.adminOnly(h.updateMotionSettings))
+	api.HandleFunc("GET /api/cameras/{id}/motion-log/events", h.listCameraMotionEvents)
+	api.HandleFunc("GET /api/cameras/{id}/motion-log/stream", h.streamCameraMotionEvents)
+	api.HandleFunc("GET /api/motion-log/events", h.listMotionEvents)
+	api.HandleFunc("GET /api/motion-log/stream", h.streamMotionEvents)
+	api.HandleFunc("GET /api/motion-log/status", h.motionLogStatus)
 
 	mux.Handle("/api/", h.authMiddleware(api))
 

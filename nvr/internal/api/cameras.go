@@ -211,6 +211,13 @@ func (h *handler) deleteCamera(w http.ResponseWriter, r *http.Request) {
 		h.go2rtc.UnregisterCameraStreams(id)
 	}
 
+	// Stop motion worker and remove motion data.
+	if h.motion != nil {
+		h.motion.StopCamera(id)
+		h.motion.Store().DeleteSettings(id)
+		h.motion.Store().DeleteByCameraID(id)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

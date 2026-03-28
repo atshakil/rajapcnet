@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVR — Motion Logs</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+.logs-content { flex: 1; display: flex; flex-direction: column; padding: 0.75rem 1rem; overflow: hidden; }
+.filters { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem; }
+.filters select, .filters input { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
+.filters button { background: var(--accent); border: none; color: #fff; padding: 0.35rem 0.8rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
+.filters button:hover { opacity: 0.9; }
+.live-toggle { display: flex; align-items: center; gap: 0.4rem; margin-left: auto; font-size: 0.8rem; }
+.log-table-wrap { flex: 1; overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--bg); }
+td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+tr:hover { background: rgba(74,158,255,0.05); }
+.status-open { color: #ffa726; }
+.status-closed { color: #4caf50; }
+.status-inferred { color: var(--muted); }
+.status-interrupted { color: var(--danger); }
+.pagination { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0; font-size: 0.8rem; }
+.pagination button { background: none; border: 1px solid var(--border); color: var(--text); padding: 0.3rem 0.6rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+.live-event { animation: flash 0.6s; }
+@keyframes flash { 0% { background: rgba(255,167,38,0.2); } 100% { background: transparent; } }
+@media(max-width:600px) {
+  .filters { flex-direction: column; }
+  td:nth-child(n+5), th:nth-child(n+5) { display: none; }
+}
+</style>
+</head>
+<body style="display:none">
+<div class="topbar">
+  <h1><a href="/monitor.html" style="color:inherit;text-decoration:none">NVR</a></h1>
+  <nav id="topnav"></nav>
+  <div class="topbar-actions">
+    <span class="user-badge" id="userBadge"></span>
+    <button class="btn-logout" onclick="logout()">Logout</button>
+  </div>
+</div>
+<div class="logs-content">
+  <div class="filters">
+    <select id="filterCam"><option value="">All Cameras</option></select>
+    <input type="date" id="filterFrom" title="From date">
+    <input type="date" id="filterTo" title="To date">
+    <select id="filterStatus">
+      <option value="">All Status</option>
+      <option value="open">Open</option>
+      <option value="closed">Closed</option>
+      <option value="inferred_closed">Inferred</option>
+      <option value="interrupted">Interrupted</option>
+    </select>
+    <button id="btnSearch" onclick="searchEvents()">Search</button>
+    <div class="live-toggle">
+      <label class="toggle">
+        <input type="checkbox" id="liveToggle">
+        <span class="toggle-slider"></span>
+      </label>
+      <span>Live</span>
+      <span class="live-dot" id="liveDot" style="display:none"></span>
+    </div>
+  </div>
+  <div class="log-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Camera</th>
+          <th>Duration</th>
+          <th>Status</th>
+          <th>Events</th>
+          <th>Topic</th>
+        </tr>
+      </thead>
+      <tbody id="logBody"></tbody>
+    </table>
+  </div>
+  <div class="pagination">
+    <button id="btnNext" disabled onclick="loadNext()">Load More</button>
+    <span id="pageInfo" class="text-muted"></span>
+  </div>
+</div>
+
+<script src="/shared.js"></script>
+<script>
+var cameras = [];
+var cameraMap = {};
+var cursor = '';
+var sseCancel = null;
+
+function statusClass(s) {
+  if (s === 'open') return 'status-open';
+  if (s === 'closed') return 'status-closed';
+  if (s === 'inferred_closed') return 'status-inferred';
+  if (s === 'interrupted') return 'status-interrupted';
+  return '';
+}
+
+function renderRow(ep) {
+  var tr = document.createElement('tr');
+  var camName = cameraMap[ep.camera_id] || ('Camera ' + ep.camera_id);
+  tr.innerHTML =
+    '<td>' + escHtml(fmtTime(ep.started_at_ms)) + '</td>' +
+    '<td>' + escHtml(camName) + '</td>' +
+    '<td>' + escHtml(fmtDuration(ep.duration_ms)) + '</td>' +
+    '<td class="' + statusClass(ep.status) + '">' + escHtml(ep.status) + '</td>' +
+    '<td>' + ep.event_count + '</td>' +
+    '<td>' + escHtml(ep.topic || '') + '</td>';
+  return tr;
+}
+
+async function searchEvents() {
+  cursor = '';
+  document.getElementById('logBody').innerHTML = '';
+  await loadPage();
+}
+
+async function loadPage() {
+  var camId = document.getElementById('filterCam').value;
+  var from = document.getElementById('filterFrom').value;
+  var to = document.getElementById('filterTo').value;
+  var status = document.getElementById('filterStatus').value;
+
+  var params = new URLSearchParams();
+  params.set('limit', '50');
+  if (from) params.set('from', new Date(from).getTime());
+  if (to) params.set('to', new Date(to + 'T23:59:59').getTime());
+  if (status) params.set('status', status);
+  if (cursor) params.set('cursor', cursor);
+
+  var path = camId
+    ? '/api/cameras/' + camId + '/motion-log/events?' + params
+    : '/api/motion-log/events?' + params;
+
+  try {
+    var resp = await api(path);
+    var data = await resp.json();
+    var body = document.getElementById('logBody');
+    (data.episodes || []).forEach(function(ep) {
+      body.appendChild(renderRow(ep));
+    });
+    cursor = data.next_cursor || '';
+    document.getElementById('btnNext').disabled = !cursor;
+    document.getElementById('pageInfo').textContent = cursor ? '' : 'End of results';
+  } catch(e) {
+    console.error('load events:', e);
+  }
+}
+
+function loadNext() {
+  if (cursor) loadPage();
+}
+
+// ── Live stream ───────────────────────────────────────────────────────────
+
+document.getElementById('liveToggle').onchange = function() {
+  if (this.checked) startLive();
+  else stopLive();
+};
+
+function startLive() {
+  document.getElementById('liveDot').style.display = '';
+  var camId = document.getElementById('filterCam').value;
+  var url = camId
+    ? '/api/cameras/' + camId + '/motion-log/stream'
+    : '/api/motion-log/stream';
+
+  sseCancel = connectSSE(url, function(type, data) {
+    if (type === 'motion.start' || type === 'motion.end' || type === 'motion.update') {
+      var row = document.createElement('tr');
+      row.className = 'live-event';
+      var camName = cameraMap[data.camera_id] || ('Camera ' + data.camera_id);
+      var dur = data.duration_ms ? fmtDuration(data.duration_ms) : '\u2014';
+      var state = type === 'motion.start' ? 'open' : type === 'motion.end' ? 'closed' : 'open';
+      row.innerHTML =
+        '<td>' + escHtml(fmtTime(data.timestamp_ms)) + '</td>' +
+        '<td>' + escHtml(camName) + '</td>' +
+        '<td>' + escHtml(dur) + '</td>' +
+        '<td class="' + statusClass(state) + '">' + escHtml(type.split('.')[1]) + '</td>' +
+        '<td>' + (data.event_count || 1) + '</td>' +
+        '<td></td>';
+      var body = document.getElementById('logBody');
+      body.insertBefore(row, body.firstChild);
+    }
+  }, function() {
+    document.getElementById('liveDot').style.display = 'none';
+    setTimeout(function() {
+      if (document.getElementById('liveToggle').checked) startLive();
+    }, 5000);
+  }, function() {
+    document.getElementById('liveDot').style.display = 'none';
+  });
+}
+
+function stopLive() {
+  document.getElementById('liveDot').style.display = 'none';
+  if (sseCancel) { sseCancel(); sseCancel = null; }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+(async function() {
+  try {
+    var resp = await api('/api/cameras');
+    cameras = await resp.json();
+    var sel = document.getElementById('filterCam');
+    cameras.forEach(function(c) {
+      cameraMap[c.id] = c.name;
+      var opt = document.createElement('option');
+      opt.value = c.id; opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+    renderNav('logs');
+    document.body.style.display = '';
+    await loadPage();
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>

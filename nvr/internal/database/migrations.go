@@ -49,6 +49,43 @@ func Migrate(db *sql.DB) error {
 		)`,
 	}
 
+	// Motion logging tables
+	motionStmts := []string{
+		`CREATE TABLE IF NOT EXISTS camera_motion_settings (
+			camera_id      INTEGER PRIMARY KEY,
+			enabled        INTEGER NOT NULL DEFAULT 0,
+			retention_days INTEGER NOT NULL DEFAULT 7,
+			updated_at_ms  INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS motion_episodes (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			camera_id         INTEGER NOT NULL,
+			source            TEXT    NOT NULL DEFAULT 'onvif',
+			started_at_ms     INTEGER NOT NULL,
+			ended_at_ms       INTEGER,
+			duration_ms       INTEGER,
+			status            TEXT    NOT NULL DEFAULT 'open',
+			close_reason      TEXT    NOT NULL DEFAULT '',
+			last_seen_at_ms   INTEGER NOT NULL,
+			event_count       INTEGER NOT NULL DEFAULT 1,
+			topic             TEXT    NOT NULL DEFAULT '',
+			rule_name         TEXT    NOT NULL DEFAULT '',
+			source_token      TEXT    NOT NULL DEFAULT '',
+			object_token      TEXT    NOT NULL DEFAULT '',
+			first_camera_ts_ms INTEGER,
+			last_camera_ts_ms  INTEGER,
+			meta_json         TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_motion_ep_cam_status ON motion_episodes(camera_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_motion_ep_cam_time ON motion_episodes(camera_id, started_at_ms, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_motion_ep_time ON motion_episodes(started_at_ms, id)`,
+	}
+	for _, s := range motionStmts {
+		if _, err := db.Exec(s); err != nil {
+			return err
+		}
+	}
+
 	// Add columns to cameras if they don't exist (for upgrades)
 	alters := []string{
 		"ALTER TABLE cameras ADD COLUMN manufacturer TEXT NOT NULL DEFAULT ''",

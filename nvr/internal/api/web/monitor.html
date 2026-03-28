@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVR — Monitor</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+.grid-wrap { flex: 1; padding: 0.5rem; overflow: auto; }
+.video-grid { display: grid; gap: 4px; height: 100%; }
+.grid-2x2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.grid-1x1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.cam-cell { background: #000; border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; cursor: pointer; }
+.cam-cell:hover { border-color: var(--accent); }
+.cam-label { position: absolute; top: 6px; left: 8px; font-size: 0.75rem; background: rgba(0,0,0,0.7); padding: 2px 6px; border-radius: 3px; z-index: 2; pointer-events: none; }
+.cam-status { position: absolute; top: 8px; right: 10px; width: 8px; height: 8px; border-radius: 50%; z-index: 2; pointer-events: none; }
+.cam-status.online { background: #4caf50; }
+.cam-status.offline { background: var(--danger); }
+.cam-placeholder { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: var(--muted); font-size: 0.85rem; z-index: 1; text-align: center; pointer-events: none; }
+.cam-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: none; z-index: 0; }
+.cam-bottom { position: absolute; bottom: 0; left: 0; right: 0; display: flex; align-items: flex-end; justify-content: space-between; padding: 6px 8px; background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.8)); z-index: 2; }
+.cam-caps { display: flex; gap: 4px; flex-wrap: wrap; }
+.cam-cap { font-size: 0.6rem; background: rgba(74,158,255,0.2); color: var(--accent); padding: 1px 4px; border-radius: 2px; }
+.cam-modes { display: flex; gap: 2px; }
+.mode-btn { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.2); color: rgba(255,255,255,0.65); padding: 1px 6px; border-radius: 3px; font-size: 0.65rem; cursor: pointer; }
+.mode-btn:hover { border-color: rgba(255,255,255,0.5); color: #fff; }
+.mode-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.codec-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.88); z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; }
+.codec-title { color: #ffa726; font-size: 0.85rem; font-weight: 600; }
+.codec-sub { color: var(--muted); font-size: 0.72rem; line-height: 1.4; max-width: 90%; }
+.codec-fix-btn { background: var(--accent); border: none; color: #fff; padding: 0.4rem 1.1rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; margin-top: 4px; }
+.codec-fix-btn:hover { opacity: 0.88; }
+.codec-fix-btn:disabled { opacity: 0.5; cursor: default; }
+.codec-cancel { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 0.25rem 0.8rem; border-radius: 4px; font-size: 0.72rem; cursor: pointer; }
+.no-cameras { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); }
+@media(max-width:600px) {
+  .grid-2x2 { grid-template-columns: 1fr; grid-template-rows: repeat(4,1fr); }
+}
+</style>
+</head>
+<body style="display:none">
+<div class="topbar">
+  <h1><a href="/monitor.html" style="color:inherit;text-decoration:none">NVR</a></h1>
+  <nav id="topnav"></nav>
+  <div class="topbar-actions">
+    <button id="btnGrid" class="active" title="2x2 Grid">Grid</button>
+    <button id="btnFull" title="Fullscreen single camera">Full</button>
+    <span class="user-badge" id="userBadge"></span>
+    <button class="btn-logout" onclick="logout()">Logout</button>
+  </div>
+</div>
+<div class="grid-wrap">
+  <div id="videoGrid" class="video-grid grid-2x2"></div>
+</div>
+
+<script src="/shared.js"></script>
+<script>
+var cameras = [];
+var camPrefs = {};
+var gridMode = '2x2';
+var selectedCam = null;
+var motionState = {}; // cameraId -> bool (active)
+
+// ── Data loading ──────────────────────────────────────────────────────────
+
+async function loadCameras() {
+  var resp = await api('/api/cameras');
+  cameras = await resp.json();
+}
+
+async function loadPrefs() {
+  try {
+    var resp = await api('/api/prefs');
+    var data = await resp.json();
+    camPrefs = {};
+    for (var k in (data.cameras||{})) camPrefs[parseInt(k)] = data.cameras[k];
+  } catch(_) {}
+}
+
+async function loadMotionStatus() {
+  try {
+    var resp = await api('/api/motion-log/status');
+    var list = await resp.json();
+    list.forEach(function(s) {
+      if (s.enabled) {
+        var el = document.querySelector('.cam-motion[data-cam-id="' + s.camera_id + '"]');
+        if (el) el.classList.add('enabled');
+      }
+    });
+  } catch(_) {}
+}
+
+// ── Grid ──────────────────────────────────────────────────────────────────
+
+function renderGrid() {
+  var grid = document.getElementById('videoGrid');
+  Array.from(grid.children).forEach(function(c) { if (c._cleanup) c._cleanup(); });
+  grid.innerHTML = '';
+  if (cameras.length === 0) {
+    grid.className = 'video-grid grid-1x1';
+    grid.innerHTML = '<div class="no-cameras">No cameras configured. Use nvrctl to add cameras.</div>';
+    return;
+  }
+  if (gridMode === '1x1' && selectedCam !== null) {
+    grid.className = 'video-grid grid-1x1';
+    var cam = cameras.find(function(c){ return c.id === selectedCam; }) || cameras[0];
+    grid.appendChild(createCamCell(cam));
+  } else {
+    grid.className = 'video-grid grid-2x2';
+    cameras.slice(0, 4).forEach(function(cam) { grid.appendChild(createCamCell(cam)); });
+  }
+  loadMotionStatus();
+}
+
+function setGrid(m) {
+  gridMode = m;
+  document.getElementById('btnGrid').classList.toggle('active', m === '2x2');
+  document.getElementById('btnFull').classList.toggle('active', m === '1x1');
+  renderGrid();
+}
+
+// ── Camera cell ───────────────────────────────────────────────────────────
+
+function createCamCell(cam) {
+  var cell = document.createElement('div');
+  cell.className = 'cam-cell';
+  cell.onclick = function() {
+    if (gridMode === '2x2') { selectedCam = cam.id; setGrid('1x1'); }
+    else { setGrid('2x2'); }
+  };
+
+  var streamURIs = [];
+  try { streamURIs = JSON.parse(cam.stream_uris || '[]'); } catch(_) {}
+
+  var mode = camPrefs[cam.id] || 'snapshot';
+  if (mode === 'primary' && streamURIs.length < 1) mode = 'snapshot';
+  if (mode === 'sub' && streamURIs.length < 2) mode = 'snapshot';
+
+  var label = document.createElement('span');
+  label.className = 'cam-label';
+  label.textContent = cam.name;
+  cell.appendChild(label);
+
+  var statusDot = document.createElement('span');
+  statusDot.className = 'cam-status ' + (cam.enabled ? 'online' : 'offline');
+  cell.appendChild(statusDot);
+
+  // Motion indicator
+  var motionDot = document.createElement('span');
+  motionDot.className = 'cam-motion';
+  motionDot.setAttribute('data-cam-id', cam.id);
+  if (motionState[cam.id]) motionDot.classList.add('active');
+  cell.appendChild(motionDot);
+
+  var ph = document.createElement('span');
+  ph.className = 'cam-placeholder';
+  ph.textContent = [cam.manufacturer, cam.model].filter(Boolean).join(' ') || cam.ip;
+  cell.appendChild(ph);
+
+  var img = document.createElement('img');
+  img.className = 'cam-video';
+  cell.appendChild(img);
+
+  var video = document.createElement('video');
+  video.className = 'cam-video';
+  video.autoplay = true; video.muted = true; video.playsInline = true;
+  cell.appendChild(video);
+
+  var bottom = document.createElement('div');
+  bottom.className = 'cam-bottom';
+
+  var caps = document.createElement('div');
+  caps.className = 'cam-caps';
+  if (cam.has_onvif) addCap(caps, 'ONVIF');
+  if (cam.has_ptz) addCap(caps, 'PTZ');
+  if (cam.has_motion) addCap(caps, 'Motion');
+  if (cam.has_infrared) addCap(caps, 'IR');
+  if (cam.has_floodlight) addCap(caps, 'Light');
+  bottom.appendChild(caps);
+
+  var availModes = [{ key:'snapshot', label:'Snap' }];
+  if (streamURIs.length >= 1) availModes.push({ key:'primary', label:'Primary' });
+  if (streamURIs.length >= 2) availModes.push({ key:'sub', label:'Sub' });
+
+  var modeBar = document.createElement('div');
+  modeBar.className = 'cam-modes';
+  var modeBtns = {};
+  availModes.forEach(function(m) {
+    var btn = document.createElement('button');
+    btn.className = 'mode-btn' + (m.key === mode ? ' active' : '');
+    btn.textContent = m.label;
+    btn.onclick = async function(e) {
+      e.stopPropagation();
+      if (m.key === mode) return;
+      mode = m.key;
+      camPrefs[cam.id] = m.key;
+      Object.values(modeBtns).forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      try { await api('/api/cameras/' + cam.id + '/pref', { method:'PUT', body: JSON.stringify({ stream_mode: m.key }) }); } catch(_) {}
+      applyMode();
+    };
+    modeBtns[m.key] = btn;
+    modeBar.appendChild(btn);
+  });
+  bottom.appendChild(modeBar);
+  cell.appendChild(bottom);
+
+  // ── Media management ──
+  var snapTimer = null, pc = null;
+
+  function showMedia(el) {
+    [img, video].forEach(function(e){ e.style.display = 'none'; });
+    el.style.display = 'block'; ph.style.display = 'none';
+  }
+
+  function stopAll() {
+    if (snapTimer) { clearInterval(snapTimer); snapTimer = null; }
+    if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+    img.src = ''; img.style.display = 'none';
+    if (pc) { pc.close(); pc = null; }
+    video.srcObject = null; video.style.display = 'none';
+    ph.style.display = '';
+    var ov = cell.querySelector('.codec-overlay');
+    if (ov) ov.remove();
+  }
+
+  async function startSnapshot() {
+    async function refresh() {
+      try {
+        var resp = await fetch('/api/cameras/' + cam.id + '/snapshot', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!resp.ok) return;
+        var blob = await resp.blob();
+        var newSrc = URL.createObjectURL(blob);
+        var old = img.src;
+        img.src = newSrc; showMedia(img);
+        if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      } catch(_) {}
+    }
+    await refresh();
+    snapTimer = setInterval(refresh, 2000);
+  }
+
+  async function startWebRTC(streamKey) {
+    try {
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.ontrack = function(evt) {
+        if (evt.track.kind === 'video') { video.srcObject = evt.streams[0]; showMedia(video); }
+      };
+      var offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await new Promise(function(resolve) {
+        if (pc.iceGatheringState === 'complete') { resolve(); return; }
+        var done = function() { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', done); resolve(); } };
+        pc.addEventListener('icegatheringstatechange', done);
+        setTimeout(resolve, 3000);
+      });
+      var resp = await fetch('/api/cameras/' + cam.id + '/webrtc?stream=' + streamKey, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp', 'Authorization': 'Bearer ' + token },
+        body: pc.localDescription.sdp
+      });
+      if (resp.status === 409) {
+        if (pc) { pc.close(); pc = null; }
+        var data = await resp.json().catch(function(){ return {}; });
+        if (data.error === 'codec_mismatch') { showCodecOverlay(data.camera_codec || 'H265', streamKey); return; }
+      }
+      if (!resp.ok) throw new Error('signaling ' + resp.status);
+      var answerSdp = await resp.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    } catch(err) {
+      console.warn('WebRTC failed for cam', cam.id, err.message);
+      if (pc) { pc.close(); pc = null; }
+      mode = 'snapshot'; camPrefs[cam.id] = 'snapshot';
+      Object.values(modeBtns).forEach(function(b){ b.classList.remove('active'); });
+      if (modeBtns['snapshot']) modeBtns['snapshot'].classList.add('active');
+      startSnapshot();
+    }
+  }
+
+  function showCodecOverlay(codec, streamKey) {
+    var existing = cell.querySelector('.codec-overlay');
+    if (existing) existing.remove();
+    var overlay = document.createElement('div');
+    overlay.className = 'codec-overlay';
+    var title = document.createElement('div');
+    title.className = 'codec-title';
+    title.textContent = '\u26a0 Camera uses ' + codec;
+    overlay.appendChild(title);
+    var sub = document.createElement('div');
+    sub.className = 'codec-sub';
+    sub.textContent = 'Most browsers only support H.264 for WebRTC. Click below to switch the camera encoder to H.264 via ONVIF.';
+    overlay.appendChild(sub);
+    var fixBtn = document.createElement('button');
+    fixBtn.className = 'codec-fix-btn';
+    fixBtn.textContent = 'Fix: Switch Camera to H.264';
+    overlay.appendChild(fixBtn);
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'codec-cancel';
+    cancelBtn.textContent = 'Keep Snapshot';
+    overlay.appendChild(cancelBtn);
+    fixBtn.onclick = async function(e) {
+      e.stopPropagation();
+      fixBtn.disabled = true;
+      fixBtn.textContent = 'Switching to H.264\u2026';
+      try {
+        var r = await fetch('/api/cameras/' + cam.id + '/set-h264', {
+          method: 'POST', headers: { 'Authorization': 'Bearer ' + token }
+        });
+        var d = await r.json().catch(function(){ return {}; });
+        if (!r.ok) throw new Error(d.message || r.status);
+        overlay.remove();
+        await new Promise(function(res){ setTimeout(res, 2000); });
+        await startWebRTC(streamKey);
+      } catch(err) {
+        fixBtn.disabled = false;
+        fixBtn.textContent = 'Failed: ' + err.message;
+      }
+    };
+    cancelBtn.onclick = function(e) {
+      e.stopPropagation(); overlay.remove();
+      mode = 'snapshot'; camPrefs[cam.id] = 'snapshot';
+      Object.values(modeBtns).forEach(function(b){ b.classList.remove('active'); });
+      if (modeBtns['snapshot']) modeBtns['snapshot'].classList.add('active');
+      startSnapshot();
+    };
+    cell.appendChild(overlay);
+  }
+
+  function applyMode() {
+    stopAll();
+    if (mode === 'snapshot') startSnapshot();
+    else if (mode === 'primary') startWebRTC('primary');
+    else if (mode === 'sub') startWebRTC('sub');
+  }
+
+  cell._cleanup = stopAll;
+  applyMode();
+  return cell;
+}
+
+function addCap(parent, text) {
+  var el = document.createElement('span');
+  el.className = 'cam-cap';
+  el.textContent = text;
+  parent.appendChild(el);
+}
+
+// ── Motion SSE ────────────────────────────────────────────────────────────
+
+function startMotionSSE() {
+  connectSSE('/api/motion-log/stream', function(type, data) {
+    var el = document.querySelector('.cam-motion[data-cam-id="' + data.camera_id + '"]');
+    if (!el) return;
+    if (type === 'motion.start' || type === 'motion.update') {
+      el.classList.add('enabled', 'active');
+      motionState[data.camera_id] = true;
+    } else if (type === 'motion.end') {
+      el.classList.remove('active');
+      motionState[data.camera_id] = false;
+    } else if (type === 'motion.runtime') {
+      el.classList.add('enabled');
+      if (data.state === 'active' && data.episode_id) {
+        el.classList.add('active');
+        motionState[data.camera_id] = true;
+      }
+    }
+  }, function() {
+    // Reconnect after 5s on error
+    setTimeout(startMotionSSE, 5000);
+  }, function() {
+    setTimeout(startMotionSSE, 5000);
+  });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+document.getElementById('btnGrid').onclick = function() { setGrid('2x2'); };
+document.getElementById('btnFull').onclick = function() {
+  if (cameras.length > 0) { selectedCam = selectedCam || cameras[0].id; setGrid('1x1'); }
+};
+
+(async function() {
+  try {
+    var resp = await api('/api/cameras');
+    cameras = await resp.json();
+    await loadPrefs();
+    document.getElementById('userBadge').textContent = '';
+    renderNav('monitor');
+    document.body.style.display = '';
+    renderGrid();
+    startMotionSSE();
+  } catch(e) {
+    // api() redirects on 401
+  }
+})();
+</script>
+</body>
+</html>
