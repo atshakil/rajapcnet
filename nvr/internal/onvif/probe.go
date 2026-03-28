@@ -3,11 +3,13 @@ package onvif
 import (
 	"bytes"
 	"crypto/md5"
+	crand "crypto/rand"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -116,7 +118,7 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 	// 1. GetDeviceInformation
 	var devInfo deviceInfoResp
 	if err := soapCallAuth(baseURL,
-		cleanEnvelope(`<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>`),
+		`<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>`,
 		"http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation",
 		username, password, &devInfo); err == nil {
 		result.HasONVIF = true
@@ -130,7 +132,7 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 	// 2. GetCapabilities
 	var caps capabilitiesResp
 	if err := soapCallAuth(baseURL,
-		cleanEnvelope(`<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>All</tds:Category></tds:GetCapabilities>`),
+		`<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>All</tds:Category></tds:GetCapabilities>`,
 		"http://www.onvif.org/ver10/device/wsdl/GetCapabilities",
 		username, password, &caps); err == nil {
 		if caps.Body.Resp.Capabilities.PTZ != nil {
@@ -152,7 +154,7 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 
 	var profiles profilesResp
 	if err := soapCallAuth(mediaURL,
-		cleanEnvelope(`<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`),
+		`<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`,
 		"http://www.onvif.org/ver10/media/wsdl/GetProfiles",
 		username, password, &profiles); err == nil {
 		for _, p := range profiles.Body.Resp.Profiles {
@@ -166,7 +168,7 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 				`<trt:GetStreamUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:StreamSetup><tt:Stream xmlns:tt="http://www.onvif.org/ver10/schema">RTP-Unicast</tt:Stream><tt:Transport xmlns:tt="http://www.onvif.org/ver10/schema"><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup><trt:ProfileToken>%s</trt:ProfileToken></trt:GetStreamUri>`,
 				p.Token)
 			var streamResp streamURIResp
-			if err := soapCallAuth(mediaURL, cleanEnvelope(streamBody),
+			if err := soapCallAuth(mediaURL, streamBody,
 				"http://www.onvif.org/ver10/media/wsdl/GetStreamUri",
 				username, password, &streamResp); err == nil {
 				if uri := streamResp.Body.Resp.MediaURI.URI; uri != "" {
@@ -179,7 +181,7 @@ func Probe(ip string, port int, onvifPath, username, password string) (*ProbeRes
 				`<trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>%s</trt:ProfileToken></trt:GetSnapshotUri>`,
 				p.Token)
 			var snapResp snapshotURIResp
-			if err := soapCallAuth(mediaURL, cleanEnvelope(snapBody),
+			if err := soapCallAuth(mediaURL, snapBody,
 				"http://www.onvif.org/ver10/media/wsdl/GetSnapshotUri",
 				username, password, &snapResp); err == nil {
 				if uri := snapResp.Body.Resp.MediaURI.URI; uri != "" {
@@ -210,15 +212,22 @@ func cleanEnvelope(innerBody string) string {
 }
 
 // soapCallAuth sends a SOAP 1.2 request with the required action in Content-Type.
-// On 401 Digest challenge it retries with HTTP Digest auth.
-func soapCallAuth(rawURL, body, action, username, password string, result any) error {
-	ct := `application/soap+xml; charset=utf-8`
+// innerBody is the SOAP body content (without the Envelope wrapper).
+// Auth strategy: SOAP 1.2 plain → SOAP 1.2 HTTP Digest → SOAP 1.2 WS-UsernameToken
+// → SOAP 1.1 WS-UsernameToken (covers Hikvision via Digest, Reolink via WS-Security+SOAP1.1).
+func soapCallAuth(rawURL, innerBody, action, username, password string, result any) error {
+	ct12 := `application/soap+xml; charset=utf-8`
 	if action != "" {
-		ct = fmt.Sprintf(`application/soap+xml; charset=utf-8; action="%s"`, action)
+		ct12 = fmt.Sprintf(`application/soap+xml; charset=utf-8; action="%s"`, action)
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(rawURL, ct, strings.NewReader(body))
+	envelope := cleanEnvelope(innerBody)
+	resp, err := client.Post(rawURL, ct12, strings.NewReader(envelope))
 	if err != nil {
+		// Transport-level failure (e.g. camera only speaks SOAP 1.1) — try SOAP 1.1 WS-Security
+		if username != "" {
+			return soapCallWSSec(client, rawURL, innerBody, action, username, password, result)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -228,30 +237,36 @@ func soapCallAuth(rawURL, body, action, username, password string, result any) e
 		return err
 	}
 
-	// 401 with Digest challenge — retry with HTTP Digest auth
+	if resp.StatusCode == 200 {
+		return xml.Unmarshal(data, result)
+	}
+
+	// 401: try HTTP Digest, then WS-UsernameToken (SOAP 1.2), then SOAP 1.1
 	if resp.StatusCode == 401 && username != "" {
 		challenge := resp.Header.Get("WWW-Authenticate")
 		if strings.HasPrefix(challenge, "Digest ") {
-			return soapCallDigest(client, rawURL, body, ct, username, password, challenge, result)
+			err2 := soapCallDigest(client, rawURL, envelope, ct12, username, password, challenge, result)
+			if err2 == nil {
+				return nil
+			}
+			// Digest rejected — try WS-UsernameToken (Reolink pattern)
+			return soapCallWSSec(client, rawURL, innerBody, action, username, password, result)
 		}
-		return fmt.Errorf("authentication failed (no Digest challenge)")
+		// No Digest challenge — try WS-UsernameToken directly
+		return soapCallWSSec(client, rawURL, innerBody, action, username, password, result)
 	}
 
-	if resp.StatusCode != 200 {
-		if bytes.Contains(data, []byte("NotAuthorized")) {
-			if i := bytes.Index(data, []byte("<env:Text")); i >= 0 {
-				if j := bytes.Index(data[i:], []byte(">")); j >= 0 {
-					if k := bytes.Index(data[i+j:], []byte("</env:Text>")); k >= 0 {
-						return fmt.Errorf("not authorized: %s", string(data[i+j+1:i+j+k]))
-					}
+	if bytes.Contains(data, []byte("NotAuthorized")) {
+		if i := bytes.Index(data, []byte("<env:Text")); i >= 0 {
+			if j := bytes.Index(data[i:], []byte(">")); j >= 0 {
+				if k := bytes.Index(data[i+j:], []byte("</env:Text>")); k >= 0 {
+					return fmt.Errorf("not authorized: %s", string(data[i+j+1:i+j+k]))
 				}
 			}
-			return fmt.Errorf("not authorized")
 		}
-		return fmt.Errorf("SOAP error (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
+		return fmt.Errorf("not authorized")
 	}
-
-	return xml.Unmarshal(data, result)
+	return fmt.Errorf("SOAP error (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
 }
 
 func truncate(data []byte, n int) string {
@@ -278,7 +293,7 @@ func soapCallDigest(client *http.Client, rawURL, body, ct, username, password, c
 
 	// Generate cnonce and compute digest
 	cnonceBytes := make([]byte, 8)
-	rand.Read(cnonceBytes)
+	crand.Read(cnonceBytes) //nolint:errcheck
 	cnonce := hex.EncodeToString(cnonceBytes)
 	nc := "00000001"
 
@@ -319,6 +334,64 @@ func soapCallDigest(client *http.Client, rawURL, body, ct, username, password, c
 		return fmt.Errorf("digest auth failed (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
 	}
 
+	return xml.Unmarshal(data, result)
+}
+
+// wssecEnvelope wraps innerBody in a SOAP envelope with a WS-Security UsernameToken header.
+// PasswordDigest = Base64(SHA1(nonce_bytes || created_utf8 || password_utf8)) per the ONVIF spec.
+func wssecEnvelope(innerBody, username, password string) string {
+	nonce := make([]byte, 16)
+	crand.Read(nonce) //nolint:errcheck
+	created := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	h := sha1.New()
+	h.Write(nonce)
+	h.Write([]byte(created))
+	h.Write([]byte(password))
+	digest := base64.StdEncoding.EncodeToString(h.Sum(nil))
+	nonceB64 := base64.StdEncoding.EncodeToString(nonce)
+	return fmt.Sprintf(
+		`<?xml version="1.0" encoding="UTF-8"?>`+
+			`<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"`+
+			` xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"`+
+			` xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">`+
+			`<s:Header><wsse:Security>`+
+			`<wsse:UsernameToken>`+
+			`<wsse:Username>%s</wsse:Username>`+
+			`<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">%s</wsse:Password>`+
+			`<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">%s</wsse:Nonce>`+
+			`<wsu:Created>%s</wsu:Created>`+
+			`</wsse:UsernameToken>`+
+			`</wsse:Security></s:Header>`+
+			`<s:Body>%s</s:Body>`+
+			`</s:Envelope>`,
+		username, digest, nonceB64, created, innerBody,
+	)
+}
+
+// soapCallWSSec sends a SOAP 1.1 request authenticated via WS-UsernameToken (ONVIF standard).
+// Uses text/xml Content-Type and a SOAPAction header (SOAP 1.1 style) for maximum camera compat.
+func soapCallWSSec(client *http.Client, rawURL, innerBody, action, username, password string, result any) error {
+	body := wssecEnvelope(innerBody, username, password)
+	req, err := http.NewRequest("POST", rawURL, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	if action != "" {
+		req.Header.Set("SOAPAction", `"`+action+`"`)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("WS-Security auth failed (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
+	}
 	return xml.Unmarshal(data, result)
 }
 
@@ -454,7 +527,7 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 	// Discover media service URLs (Media1 from GetCapabilities, Media2 from GetServices)
 	var caps capabilitiesResp
 	soapCallAuth(baseURL,
-		cleanEnvelope(`<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>Media</tds:Category></tds:GetCapabilities>`),
+		`<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:Category>Media</tds:Category></tds:GetCapabilities>`,
 		"http://www.onvif.org/ver10/device/wsdl/GetCapabilities",
 		username, password, &caps) //nolint:errcheck
 	mediaURL := baseURL
@@ -466,7 +539,7 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 	media2URL := ""
 	var svcs getServicesResp
 	if err := soapCallAuth(baseURL,
-		cleanEnvelope(`<tds:GetServices xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>`),
+		`<tds:GetServices xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>`,
 		"http://www.onvif.org/ver10/device/wsdl/GetServices",
 		username, password, &svcs); err == nil {
 		for _, svc := range svcs.Body.Resp.Services {
@@ -493,7 +566,7 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 	// --- Media 1.x pass ---
 	var cfgs vecResp
 	if err := soapCallAuth(mediaURL,
-		cleanEnvelope(`<trt:GetVideoEncoderConfigurations xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`),
+		`<trt:GetVideoEncoderConfigurations xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`,
 		"http://www.onvif.org/ver10/media/wsdl/GetVideoEncoderConfigurations",
 		username, password, &cfgs); err != nil {
 		return false, fmt.Errorf("GetVideoEncoderConfigurations: %w", err)
@@ -504,7 +577,7 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 		}
 		body := buildSetVECH264Body(c)
 		var dummy struct{}
-		if err := soapCallAuth(mediaURL, cleanEnvelope(body),
+		if err := soapCallAuth(mediaURL, body,
 			"http://www.onvif.org/ver10/media/wsdl/SetVideoEncoderConfiguration",
 			username, password, &dummy); err != nil {
 			return changed, fmt.Errorf("SetVideoEncoderConfiguration token=%s: %w", c.Token, err)
@@ -515,7 +588,7 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 	// --- Media 2.0 pass (Hikvision reports H265 here, not in Media1) ---
 	var cfgs2 vec2Resp
 	if err := soapCallAuth(media2URL,
-		cleanEnvelope(`<tr2:GetVideoEncoderConfigurations xmlns:tr2="http://www.onvif.org/ver20/media/wsdl"/>`),
+		`<tr2:GetVideoEncoderConfigurations xmlns:tr2="http://www.onvif.org/ver20/media/wsdl"/>`,
 		"http://www.onvif.org/ver20/media/wsdl/GetVideoEncoderConfigurations",
 		username, password, &cfgs2); err == nil {
 		for _, c := range cfgs2.Body.Resp.Configs {
@@ -524,7 +597,7 @@ func EnsureH264(ip string, port int, onvifPath, username, password string) (bool
 			}
 			body := buildSetVEC2H264Body(c)
 			var dummy struct{}
-			if err2 := soapCallAuth(media2URL, cleanEnvelope(body),
+			if err2 := soapCallAuth(media2URL, body,
 				"http://www.onvif.org/ver20/media/wsdl/SetVideoEncoderConfiguration",
 				username, password, &dummy); err2 != nil {
 				return changed, fmt.Errorf("Media2 SetVideoEncoderConfiguration token=%s: %w", c.Token, err2)

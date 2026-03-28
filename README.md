@@ -59,6 +59,7 @@ ISP ONT ──► [Port 1]    │  VLAN 50 (isolated WAN)      │    [Port 2] �
 |--------|--------|------|---------|---------|------------|
 | 192.168.1.0/24 | br-lan.1 | 1 (untagged) | LAN (default) | 192.168.1.1 | 192.168.1.100 – 192.168.1.249 |
 | 192.168.10.0/24 | br-lan.10 | 10 (tagged) | IoT (isolated) | 192.168.10.1 | 192.168.10.100 – 192.168.10.249 |
+| 192.168.20.0/24 | br-lan.20 | 20 (tagged) | Cameras (RouterF2) | 192.168.20.1 | 192.168.20.100 – 192.168.20.249 |
 
 - DNS: 1.1.1.1, 8.8.8.8 (or ISP-provided)
 
@@ -74,6 +75,7 @@ IoT isolation is implemented via **802.1Q bridge VLANs** on the DSA bridge (`br-
 |---------|--------|-------|-----------|----------|
 | 1 | br-lan.1 | lan1–lan4 | `u*` (untagged, PVID) | LAN (default) |
 | 10 | br-lan.10 | lan1–lan4 | `t` (tagged) | IoT (isolated) |
+| 20 | br-lan.20 | lan1–lan4 | `t` (tagged) | Cameras / IoT (RouterF2) |
 
 ### Network Zones
 
@@ -291,11 +293,20 @@ The Pi on VLAN 10 can reach VLAN 20 (192.168.20.0/24) via inter-VLAN routing on 
 
 | IP | Hostname | Type | Ports | ONVIF |
 |----|----------|------|-------|-------|
-| 192.168.20.133 | IPC.lan | Camera | HTTP (80), RTSP (554) | — |
-| 192.168.20.162 | — | Hikvision | HTTP (80), HTTPS (443), RTSP (554) | Enabled |
-| 192.168.20.179 | — | Hikvision | HTTP (80), HTTPS (443), RTSP (554) | Enabled |
-| 192.168.20.197 | Garage.lan | Camera | HTTP (80), HTTPS (443), RTSP (554) | — |
+| 192.168.20.134 | Dahua-MainGate | Dahua DH-IPC-HDBW1230DE-SW | HTTP (80), RTSP (554) | Enabled |
+| 192.168.20.162 | Hikvision-Cam1 | Hikvision DS-2CD1323G2-LIU | HTTP (80), HTTPS (443), RTSP (554) | Enabled |
+| 192.168.20.179 | Hikvision-Cam2 | Hikvision DS-2CD1323G2-LIU | HTTP (80), HTTPS (443), RTSP (554) | Enabled |
+| 192.168.20.198 | Reolink-Garage | Reolink E1 Outdoor | HTTP (80), RTSP (554), ONVIF (8000) | Enabled |
+### Static DHCP Leases (RouterF2)
 
+| Hostname | MAC | IP | VLAN | Device |
+|----------|-----|-----|------|--------|
+| RaspberryPi-CNC | b8:27:eb:0d:26:5b | 192.168.10.250 | 10 | Pi 3B+ (wlan0) |
+| RaspberryPi-CNC-eth0 | b8:27:eb:58:73:0e | 192.168.10.251 | 10 | Pi 3B+ (eth0) |
+| Hikvision-Cam1 | 84:94:59:9d:4f:71 | 192.168.20.162 | 20 | Hikvision DS-2CD1323G2-LIU |
+| Hikvision-Cam2 | 84:94:59:a5:c2:69 | 192.168.20.179 | 20 | Hikvision DS-2CD1323G2-LIU |
+| Reolink-Garage | ec:71:db:ed:ec:54 | 192.168.20.198 | 20 | Reolink E1 Outdoor |
+| Dahua-MainGate | fc:b6:9d:e4:ee:b6 | 192.168.20.134 | 20 | Dahua DH-IPC-HDBW1230DE-SW |
 ## Monitoring & Management
 
 - **LuCI Web UI**: http://192.168.1.1 (from LAN/WiFi)
