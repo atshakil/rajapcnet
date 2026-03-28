@@ -55,7 +55,18 @@ Configuration is via environment variables. See `.env.client.example` and `.env.
 | POST | `/api/cameras` | Add camera |
 | GET | `/api/cameras/{id}` | Get camera |
 | PUT | `/api/cameras/{id}` | Update camera |
-| DELETE | `/api/cameras/{id}` | Delete camera |
+| DELETE | `/api/cameras/{id}` | Delete camera (cascades motion data) |
+| GET | `/api/cameras/{id}/snapshot` | Fetch JPEG snapshot |
+| POST | `/api/cameras/{id}/webrtc` | WebRTC SDP exchange |
+| POST | `/api/cameras/{id}/set-h264` | Switch camera encoder to H.264 |
+| PUT | `/api/cameras/{id}/pref` | Set stream mode preference |
+| GET | `/api/cameras/{id}/motion-log` | Get motion settings for camera |
+| PUT | `/api/cameras/{id}/motion-log` | Enable/disable motion logging (admin) |
+| GET | `/api/cameras/{id}/motion-log/events` | List motion episodes |
+| GET | `/api/cameras/{id}/motion-log/stream` | SSE stream of motion events |
+| GET | `/api/motion-log/events` | List all motion episodes |
+| GET | `/api/motion-log/stream` | SSE stream of all motion events |
+| GET | `/api/motion-log/status` | Motion worker runtime status |
 
 ## Architecture
 
@@ -82,6 +93,7 @@ See [docs/](docs/) for feature-specific documentation.
 | **nvr** | Go 1.25, `linux/arm64` | API server, camera management, ONVIF probe, recording orchestration |
 | **go2rtc** | v1.9.14 | RTSP→WebRTC relay, on-demand stream proxy |
 | **ffmpeg** | 7.1.3 | Recording segmentation (RTSP→MP4) |
+| **sqlite3** | 3.46.1 | CLI for database inspection (`apt install sqlite3`) |
 | **OS** | Debian 13 (trixie), kernel 6.12.62+rpt-rpi-v8 | Raspberry Pi OS headless |
 | **Tailscale** | — | Remote access mesh VPN |
 
@@ -110,11 +122,39 @@ Browser ──WebRTC──► go2rtc ◄──RTSP──► Camera
                       │ HTTP API (localhost:1984)
                       │
   Browser ──REST──► nvr (localhost:8080)
+  Browser ◄──SSE───┘
                       │
-                      ├── SQLite (camera DB, users, config)
+                      ├── SQLite (camera DB, users, motion settings+episodes)
                       ├── ONVIF SOAP (probe, codec switching)
+                      ├── ONVIF PullPoint (motion event subscriptions)
+                      ├── Motion Manager (per-camera workers, episode state machine)
                       └── ffmpeg (recording segments → /mnt/nvr)
 ```
+
+#### Motion Event Pipeline
+
+```
+Camera (ONVIF)        Motion Worker          Store/Hub           Browser
+    │                      │                     │                  │
+    │  PullMessages (≤10s) │                     │                  │
+    │────notifications───►│                     │                  │
+    │                      │── normalize topic ─►│                  │
+    │                      │   parse active/     │                  │
+    │                      │   inactive state     │                  │
+    │                      │                     │                  │
+    │                      │── open/bump/close ►│ episode (SQLite) │
+    │                      │                     │── publish event ►│ SSE
+    │                      │                     │                  │
+    │  (idle 10s)          │── inferred_close ►│                  │
+```
+
+- One worker goroutine per enabled camera, managed by the Motion Manager
+- Workers use ONVIF PullPoint subscriptions (long-polling, PT10S message timeout)
+- Raw ONVIF events are normalized into episodes: first `active` opens, subsequent bumps count, `inactive` closes
+- If no signal for 10s, episode auto-closes with status `inferred_closed`
+- Stale episodes from prior crashes are closed on startup with status `interrupted`
+- Hourly retention cleanup deletes episodes older than per-camera `retention_days` (batch 500)
+- Worker backoff: 2s → 4s → 8s → ... → 60s cap on repeated PullPoint failures
 
 - **go2rtc** streams are on-demand: no CPU/bandwidth until a viewer connects
 - **nvr** registers RTSP source URLs with go2rtc at startup; go2rtc pulls from cameras only when a consumer (WebRTC/RTSP client) connects
